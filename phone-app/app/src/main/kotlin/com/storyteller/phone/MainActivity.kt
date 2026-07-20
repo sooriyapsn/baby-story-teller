@@ -1,4 +1,4 @@
-package com.storyteller.app
+package com.storyteller.phone
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -17,12 +17,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.storyteller.app.data.ServerConfig
-import com.storyteller.app.ui.CallScreen
-import com.storyteller.app.ui.ParentScreen
-import com.storyteller.app.ui.ServerSetupScreen
-import com.storyteller.app.ui.WelcomeScreen
-import com.storyteller.app.ui.theme.StoryTellerTheme
+import com.storyteller.phone.data.ServerConfig
+import com.storyteller.phone.ui.CallScreen
+import com.storyteller.phone.ui.ParentScreen
+import com.storyteller.phone.ui.ServerSetupScreen
+import com.storyteller.phone.ui.WelcomeScreen
+import com.storyteller.phone.ui.theme.StoryTellerTheme
 
 sealed interface Screen {
     data object ServerSetup : Screen

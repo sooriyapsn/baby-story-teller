@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Apps default to trusting only system-preinstalled CAs (API 24+); the
+  backend's HTTPS cert is issued by Caddy's own local CA (see the main
+  README's "HTTPS" section), which the parent installs into the tablet's
+  user-added trusted credentials once. This config opts back in to trusting
+  that store, matching what a browser already does by default.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

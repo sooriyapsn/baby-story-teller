@@ -1,10 +1,10 @@
-package com.storyteller.app.ui
+package com.storyteller.phone.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -19,9 +19,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.storyteller.app.data.ApiClient
-import com.storyteller.app.data.ServerConfig
-import com.storyteller.app.data.WakeClient
+import com.storyteller.phone.data.ApiClient
+import com.storyteller.phone.data.ServerConfig
+import com.storyteller.phone.data.WakeClient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -125,14 +125,14 @@ fun ServerSetupScreen(serverConfig: ServerConfig, onReady: (String) -> Unit) {
             value = url,
             onValueChange = { url = it; error = null },
             label = { Text("Server address") },
-            modifier = Modifier.width(400.dp),
+            modifier = Modifier.fillMaxWidth(),
             isError = error != null,
         )
         OutlinedTextField(
             value = wakeSecret,
             onValueChange = { wakeSecret = it },
             label = { Text("Wake secret (optional)") },
-            modifier = Modifier.width(400.dp).padding(top = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         error?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
         Button(

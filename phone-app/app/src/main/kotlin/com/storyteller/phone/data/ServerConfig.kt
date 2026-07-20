@@ -1,4 +1,4 @@
-package com.storyteller.app.data
+package com.storyteller.phone.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
