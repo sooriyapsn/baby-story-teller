@@ -39,6 +39,7 @@ import com.storyteller.app.data.ApiClient
 import com.storyteller.app.data.CHARACTERS
 import com.storyteller.app.voice.AgentState
 import com.storyteller.app.voice.LiveKitManager
+import kotlinx.coroutines.delay
 
 @Composable
 fun CallScreen(
@@ -61,6 +62,21 @@ fun CallScreen(
             manager.connect(details.serverUrl, details.participantToken)
         } catch (e: Exception) {
             errorText = "Couldn't start the call: ${e.message}"
+        }
+    }
+
+    // Parent-set play time limit: end the call gently instead of leaving it
+    // open indefinitely, mirroring the web app's behavior (session-view.tsx).
+    LaunchedEffect(Unit) {
+        val minutes = try {
+            ApiClient(baseUrl).status().timeLimitMinutes
+        } catch (_: Exception) {
+            null
+        }
+        if (minutes != null && minutes > 0) {
+            delay(minutes * 60_000L)
+            manager.disconnect()
+            onEndCall()
         }
     }
 
