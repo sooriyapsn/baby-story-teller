@@ -7,6 +7,16 @@ WebRTC through Android's native audio pipeline (hardware AEC/NS/AGC where the
 device supports it, proper audio-focus and Bluetooth-routing integration)
 instead of whatever a WebView happens to negotiate.
 
+> **Disclaimers:** this is a hobby project's Android client, not a certified
+> children's product — see the main README's
+> [Disclaimers](../README.md#disclaimers) section for the full statement.
+> Short version: it's still actively being developed and can break between
+> builds, it's provided as-is with no warranty (MIT license), a parent should
+> supervise rather than treat it as a childproofed app, and bugs should be
+> [filed as issues](https://github.com/sooriyapsn/baby-story-teller/issues)
+> rather than silently worked around — they get looked at and fixed on a
+> best-effort basis.
+
 ## Status
 
 Built, installed, and iterated on against a real Samsung tablet over
