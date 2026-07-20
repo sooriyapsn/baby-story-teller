@@ -5,6 +5,15 @@
 # step to trust this CA on your devices.
 {
 	admin off
+	# Clients connecting to a raw IP (not a hostname) often omit SNI
+	# entirely — RFC 6066 only covers hostnames, so many TLS stacks
+	# (confirmed: Android's OkHttp) correctly leave it out for IP
+	# literals. Without this, Caddy's on-demand TLS has nothing to go on
+	# for those connections and falls back to issuing a cert for its own
+	# local network interface address (the Docker bridge IP, useless to
+	# an external client) instead of the address actually being used to
+	# reach it. default_sni tells it what identity to assume instead.
+	default_sni {$CADDY_DEFAULT_SNI}
 }
 
 :{$WEB_EXTERNAL_PORT} {

@@ -318,6 +318,16 @@ def _build_specs(cfg: Config) -> list[ChildSpec]:
                     "WEB_INTERNAL_PORT": str(cfg.web_bind_port),
                     "LIVEKIT_EXTERNAL_PORT": str(cfg.livekit_bind_port),
                     "LIVEKIT_INTERNAL_PORT": str(cfg.livekit_internal_port),
+                    # Identity to assume when a client sends no SNI at all —
+                    # e.g. Android's OkHttp connecting to a raw IP, which
+                    # omits SNI since RFC 6066 only covers hostnames. Without
+                    # this, on-demand TLS falls back to the container's own
+                    # internal Docker IP instead of the address clients
+                    # actually use (confirmed empirically). Only affects the
+                    # no-SNI case — real hostname/IP SNI still resolves
+                    # normally either way, so this doesn't change anything
+                    # for clients (like browsers) that do send it.
+                    "CADDY_DEFAULT_SNI": cfg.livekit_node_ip,
                 },
                 # Caddy has no simple unauthenticated health endpoint with
                 # `admin off`; give it a moment to bind and issue its
@@ -466,6 +476,16 @@ def _download_models(cfg: Config) -> int:
         logger.info("downloading nemotron model %s", cfg.nemotron_model_name)
         import nemo.collections.asr as nemo_asr  # type: ignore[import]
         nemo_asr.models.ASRModel.from_pretrained(cfg.nemotron_model_name)
+
+    # On by default — see agent.py's VOICE_ID_ENABLED / speaker_id.py.
+    voice_id_enabled = os.getenv("VOICE_ID_ENABLED", "true").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if voice_id_enabled:
+        voice_id_model = os.getenv("VOICE_ID_MODEL", "titanet_small")
+        logger.info("downloading speaker-id model %s", voice_id_model)
+        import nemo.collections.asr as nemo_asr  # type: ignore[import]
+        nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(voice_id_model)
 
     return 0
 

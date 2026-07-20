@@ -1,5 +1,17 @@
 # Client-side voice (native STT/TTS) — plan & status
 
+> **Superseded — this direction was not pursued.** A later session kept
+> LiveKit/WebRTC in both native apps (it was never dropped) and instead
+> shipped a different feature: server-side voice recognition (recognizing a
+> returning child by voice and greeting her by name — see the main README's
+> "Voice recognition" section, `local_voice_ai/speaker_id.py` /
+> `known_speakers.py`), plus a full Canvas-drawn animated mascot in
+> `tab-app`/`phone-app` (`ui/Mascot.kt`, `ui/BalloonField.kt`). None of the
+> `SpeechRecognizer`/on-device-`TextToSpeech`/WebSocket-relay architecture
+> below was built, and Kokoro/LiveKit remain exactly as they were before
+> this doc was written. Kept here for the historical reasoning (in case this
+> direction is revisited later), not as a description of the current app.
+
 Written because we're deep into a session (~74%+ of budget used when this
 was started) and wanted a clear checkpoint: what's decided, what's built,
 what's not, and exactly what to do next when picking this back up.
@@ -131,8 +143,11 @@ passing as of this doc):**
   `native-speach` branch.
 
 **Planned, NOT built yet:**
-- The punctuation→SSML translator itself (the table above is fully
-  specified; the code implementing it doesn't exist yet).
+- ~~The punctuation→SSML translator itself~~ — this part actually exists
+  (`local_voice_ai/voice_modulation.py`, 27 passing tests), just never
+  wired into anything: nothing in `agent.py`/`characters.py` calls it, since
+  the WebSocket/native-TTS architecture it was meant to feed was never built.
+  An orphaned module, not a bug — safe to either delete or repurpose later.
 - The new WebSocket endpoint on the server.
 - `voice_type` field + 7 additional characters.
 - Native app changes: `SpeechRecognizer` integration, `TextToSpeech`

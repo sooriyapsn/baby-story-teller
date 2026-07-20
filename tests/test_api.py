@@ -27,6 +27,7 @@ def cfg(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> Config:
     monkeypatch.setenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
     monkeypatch.setenv("PARENT_SETTINGS_PATH", str(tmp_path / "parent-settings.json"))
     monkeypatch.setenv("PARENT_PIN", "1234")
+    monkeypatch.setenv("KNOWN_SPEAKERS_PATH", str(tmp_path / "known-speakers.json"))
     return Config.from_env()
 
 
@@ -271,3 +272,42 @@ class TestParentSettings:
         payload = _decode_jwt_payload(r.json()["participantToken"])
         metadata = json.loads(payload["roomConfig"]["metadata"])
         assert metadata["story"] == "The tortoise and hare"
+
+
+class TestKnownSpeakers:
+    def test_list_requires_pin_header(self, client: TestClient) -> None:
+        r = client.get("/api/parent/known-speakers")
+        assert r.status_code == 401
+
+    def test_list_is_empty_by_default(self, client: TestClient) -> None:
+        r = client.get("/api/parent/known-speakers", headers={"X-Parent-Pin": "1234"})
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_list_never_exposes_raw_embeddings(self, client: TestClient) -> None:
+        from local_voice_ai import known_speakers
+
+        known_speakers.enroll("Emma", [1.0, 0.0, 0.0])
+        r = client.get("/api/parent/known-speakers", headers={"X-Parent-Pin": "1234"})
+        assert r.status_code == 200
+        [entry] = r.json()
+        assert entry["name"] == "Emma"
+        assert "embedding" not in entry
+
+    def test_delete_requires_pin_header(self, client: TestClient) -> None:
+        r = client.delete("/api/parent/known-speakers/Emma")
+        assert r.status_code == 401
+
+    def test_delete_unknown_name_is_404(self, client: TestClient) -> None:
+        r = client.delete(
+            "/api/parent/known-speakers/Nobody", headers={"X-Parent-Pin": "1234"}
+        )
+        assert r.status_code == 404
+
+    def test_delete_removes_entry(self, client: TestClient) -> None:
+        from local_voice_ai import known_speakers
+
+        known_speakers.enroll("Emma", [1.0, 0.0, 0.0])
+        r = client.delete("/api/parent/known-speakers/Emma", headers={"X-Parent-Pin": "1234"})
+        assert r.status_code == 200
+        assert known_speakers.load_speakers() == []

@@ -21,6 +21,11 @@ cloud account, or an open-ended chatbot on the other end.
   (the session ends itself), and lets a parent paste in or upload a specific
   story/lesson for the character to teach, so the content isn't just "whatever
   a generic LLM feels like saying."
+- **Remembers her by voice.** The agent recognizes a returning child from her
+  voice alone (no login, no UI) and greets her by name — see
+  [Voice recognition](#voice-recognition). Best-effort, not a security
+  feature, and off/on is controlled the same way as every other optional
+  piece here.
 - **Fully local and private.** Everything — speech recognition, the language
   model, text-to-speech — runs on your own hardware in one container. No
   conversation audio or transcript ever leaves your network, and it keeps
@@ -156,6 +161,37 @@ steps anywhere, that needs a domain name pointed at this machine and port `443`
 reachable from the internet — a materially different (and, for a home app,
 usually unnecessary) setup than what's documented here.
 
+### Reaching it by a hostname instead of a raw IP address
+
+The tablet/phone apps and the web UI both work fine pointed at a raw LAN IP
+(`https://192.168.1.203:8091`), but a hostname is more robust for two
+independent reasons: it survives the server's IP ever changing (DHCP), and —
+more subtly — some HTTP clients simply don't send TLS SNI when connecting to
+a literal IP address (SNI is defined for hostnames; Android's OkHttp is one
+such client, confirmed while debugging the native apps), which can affect
+which certificate a TLS server picks. A hostname sidesteps that class of
+problem entirely, since SNI is reliably sent for hostnames by every client.
+
+Setting one up is two steps on your router (exact menu names vary by
+brand/firmware — look for these two *concepts*, not these exact words):
+
+1. **Reserve a static IP for this machine** — usually under "DHCP
+   reservation" or "Address reservation," tied to this machine's MAC
+   address. Without this, the IP can drift after a DHCP lease renewal and
+   break anything pointed at the old one (the app's server address, any
+   `default_sni` config, etc.).
+2. **Add a local DNS / hostname entry** pointing that reserved IP at a name
+   of your choosing (e.g. `storyteller.home` or `storyteller.local`) —
+   look for "Local DNS," "DNS rebind protection," "Static DNS," or similar.
+   Not every router supports this; if yours doesn't, the reserved IP alone
+   (step 1) is still worth doing even without a hostname, since it at least
+   makes the raw-IP address stable.
+
+Once set up, use `https://storyteller.home:8091` (or whatever you chose) as
+the server address everywhere instead of the IP — no other config changes
+needed, since Caddy's `tls internal { on_demand }` issues a certificate for
+whatever identity a client's SNI actually asks for.
+
 ## Swapping in cloud providers
 
 Each service has a single "manage" decision driven by its base URL — point it at a remote endpoint and the local subprocess is skipped:
@@ -168,6 +204,32 @@ Each service has a single "manage" decision driven by its base URL — point it 
 | Use a remote OpenAI-compatible TTS| `TTS_BASE_URL=…`, `TTS_API_KEY=…`                                                    |
 
 The supervisor logs which children it manages on startup.
+
+## Voice recognition
+
+On by default. The agent asks a new child's name once, then recognizes her
+by voice alone on later calls and greets her by name — no login, no app UI
+involved, purely a backend feature (see `local_voice_ai/speaker_id.py` and
+`known_speakers.py`). It's built on NVIDIA NeMo's `titanet_small`
+speaker-verification model, already a dependency via the `ml` extra (used
+for Nemotron STT), so this adds no new ML library.
+
+This is explicitly best-effort, not an authentication system: `titanet` is
+trained mostly on adult voices, so accuracy on a child's higher-pitched,
+more variable speech is unverified and likely imperfect. A false "doesn't
+recognize her" just means she gets asked her name again — a soft failure,
+not a bug to chase down.
+
+- `VOICE_ID_ENABLED` (default `true`) / `VOICE_ID_MODEL` (default
+  `titanet_small`) — turn it off, or swap in NeMo's larger/more accurate
+  `titanet_large`, respectively.
+- `KNOWN_SPEAKERS_PATH` (default `/models/known-speakers.json`) — where the
+  enrolled `{name, voice embedding, enrolled-at}` entries persist, same
+  volume as model weights.
+- `GET /api/parent/known-speakers` (PIN-gated, `X-Parent-Pin` header) — list
+  enrolled names/timestamps. Raw embeddings never leave the server, not even
+  to this endpoint.
+- `DELETE /api/parent/known-speakers/{name}` (PIN-gated) — forget a voice.
 
 ## Local development (no Docker)
 
@@ -212,6 +274,8 @@ cd frontend && pnpm install && pnpm run dev
 │  ├─ config.py            # env-driven config + manage-X flags
 │  ├─ api.py               # FastAPI: token route, status, static frontend
 │  ├─ agent.py             # LiveKit Agents worker
+│  ├─ speaker_id.py        # voice-recognition embeddings (NeMo titanet)
+│  ├─ known_speakers.py    # enrolled {name, voice embedding} store
 │  ├─ wakeword.py          # optional "hey livekit" gate for the agent
 │  ├─ caddy/Caddyfile      # HTTPS front door (ENABLE_HTTPS=1 only)
 │  └─ services/
@@ -219,7 +283,8 @@ cd frontend && pnpm install && pnpm run dev
 │     ├─ whisper/server.py
 │     └─ kokoro/server.py
 ├─ frontend/               # Next.js (configured for static export)
-├─ tab-app/                # Native Android client (Kotlin/Compose) — see tab-app/README.md
+├─ tab-app/                # Native Android client, tablet-oriented (Kotlin/Compose) — see tab-app/README.md
+├─ phone-app/              # Native Android client, phone-oriented (Kotlin/Compose) — see phone-app/README.md
 ├─ tests/                  # pytest suite
 ├─ Dockerfile              # multi-stage build
 ├─ docker-compose.yml      # one service (CPU default)
@@ -237,16 +302,60 @@ See `.env` for the full list. The most important ones:
 - `LLAMA_OFFLINE` — offline LLM startup. Auto by default: once the model is cached, it starts with no internet (skips the Hugging Face lookup); the first run still downloads. Set `LLAMA_OFFLINE=1` to force it, or `0` to always re-check. `LLAMA_MODEL_PATH=/models/…​.gguf` loads a local file directly instead.
 - `WAKE_WORD=1` — the agent joins deaf and only starts listening after it hears **“Hey LiveKit”** (on-device detection via [livekit-wakeword](https://github.com/livekit/livekit-wakeword), model baked into the image). `WAKE_WORD_THRESHOLD` (default `0.5`) tunes sensitivity; scores are logged at DEBUG for calibration.
 - `STT_PROVIDER` (`nemotron`|`whisper`), `STT_BASE_URL`, `STT_MODEL`; `WHISPER_MODEL` picks the faster-whisper model for the whisper provider.
-- `TTS_BASE_URL`, `TTS_VOICE`
+- `TTS_BASE_URL`, `TTS_VOICE`, `TTS_SPEED` (default `0.9` — Kokoro's default pace reads a little quick/flat for storytelling; slightly under `1.0` gives pauses and drawn-out words more room to land).
+- `VOICE_ID_ENABLED` (default `true`), `VOICE_ID_MODEL` (default `titanet_small`), `KNOWN_SPEAKERS_PATH` — see [Voice recognition](#voice-recognition).
 - `WEB_PORT` (default `8080`)
 - `ENABLE_HTTPS=1` — fronts the web/API and LiveKit signaling with Caddy + a local CA (see [HTTPS](#https)). `PARENT_PIN` (default `1234`) gates the parent settings panel.
 - `MANAGE_LIVEKIT`, `MANAGE_LLAMA`, `MANAGE_STT`, `MANAGE_TTS` — explicit overrides for the auto-detected "is the URL external?" logic.
+
+## Debugging
+
+General approach that's worked well building this: **reproduce with real
+evidence before changing anything.** Guessing at a fix and shipping it
+without confirming the actual failure mode wastes a rebuild cycle at best
+and papers over the real bug at worst. Concretely:
+
+- **Read the actual logs, not just the summary.** `docker compose logs app
+  --since=5m` shows every child's real output — the specific error, not a
+  guess at one. Most "it's not working" reports turn out to have a precise
+  stack trace or connection error sitting in there already.
+- **Reproduce the exact failure, not something adjacent.** If voice input
+  is involved, a text-only test doesn't prove anything about the real path.
+  One useful trick: synthesize a real spoken question via the server's own
+  TTS (`curl -X POST http://127.0.0.1:8880/v1/audio/speech ...` from inside
+  the container) and feed it to a browser as fake microphone input
+  (Chromium's `--use-file-for-fake-audio-capture=<wav>` flag) — that
+  exercises the real STT→LLM→TTS pipeline end to end instead of guessing
+  from the outside.
+- **Check the layer below the one that looks broken.** An app-level "can't
+  connect" error is often actually a network/TLS/DNS problem one layer
+  down. `openssl s_client -connect host:port` (with and without
+  `-servername`) shows exactly what certificate a server presents and
+  whether SNI changes the answer — this is how a "certificate not trusted"
+  report on the native apps turned out to be Caddy serving the wrong
+  certificate's identity for clients that omit SNI when connecting to a
+  raw IP, not a trust or packaging problem at all. `lsusb -v` similarly
+  shows the real USB device state below whatever `adb devices` reports.
+- **Verify the fix the same way you found the bug.** Changing the prompt
+  or the config and declaring victory isn't verification — rerun the exact
+  reproduction (same synthesized audio, same `openssl s_client` check,
+  same failing request) and confirm the *specific* symptom is actually
+  gone, not just that something superficially changed.
+
+If you hit something you can't get to the bottom of — or something in this
+README turns out to be wrong or out of date — please
+[open an issue](https://github.com/sooriyapsn/baby-story-teller/issues).
+Real repro steps help a lot (what you ran, what you expected, what actually
+happened, and any relevant log output) — but even a rough "this didn't work
+and I'm not sure why" report is genuinely useful and worth filing rather
+than sitting on.
 
 ## Credits
 
 - LiveKit: <https://livekit.io/>
 - LiveKit Agents: <https://docs.livekit.io/agents/>
 - NVIDIA Nemotron Speech: <https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b>
+- NVIDIA NeMo (speaker-verification model, `titanet_small`, used for voice recognition): <https://github.com/NVIDIA/NeMo>
 - llama.cpp: <https://github.com/ggml-org/llama.cpp>
 - Gemma 4 (default LLM, Unsloth QAT GGUF): <https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF>
 - Kokoro TTS: <https://github.com/hexgrad/kokoro>

@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from livekit import api as lk_api
 from pypdf import PdfReader
 
+from . import known_speakers
 from .characters import CHARACTERS, get_character
 from .config import Config
 from .parent_settings import (
@@ -278,6 +279,26 @@ def build_app(
             settings.story_title = story_title[:200] if isinstance(story_title, str) else ""
         save_settings(settings)
         return JSONResponse(vars(settings))
+
+    @app.get("/api/parent/known-speakers")
+    async def parent_list_known_speakers(request: Request) -> JSONResponse:
+        """Names + enrollment times only — never the raw voice embeddings,
+        those never leave the agent process."""
+        if not verify_pin(request.headers.get("X-Parent-Pin") or ""):
+            raise HTTPException(status_code=401, detail="invalid pin")
+        speakers = known_speakers.load_speakers()
+        return JSONResponse(
+            [{"name": s.name, "enrolled_at": s.enrolled_at} for s in speakers]
+        )
+
+    @app.delete("/api/parent/known-speakers/{name}")
+    async def parent_delete_known_speaker(name: str, request: Request) -> JSONResponse:
+        if not verify_pin(request.headers.get("X-Parent-Pin") or ""):
+            raise HTTPException(status_code=401, detail="invalid pin")
+        removed = known_speakers.forget(name)
+        if not removed:
+            raise HTTPException(status_code=404, detail="no such known speaker")
+        return JSONResponse({"ok": True})
 
     @app.post("/api/parent/upload-pdf")
     async def parent_upload_pdf(request: Request) -> JSONResponse:

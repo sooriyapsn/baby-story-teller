@@ -9,13 +9,10 @@ instead of whatever a WebView happens to negotiate.
 
 ## Status
 
-Builds clean (`./gradlew assembleDebug` succeeds, lint passes with only
-cosmetic/version-bump warnings) but has **not been run on a real device** —
-this was written and verified by compiling it, not by installing and testing
-it, since no Android device or emulator was available in the environment it
-was built in. Treat the voice-call screen especially as needing real-device
-verification before you trust it: open it in Android Studio, run it on your
-Samsung tablet, and watch the logcat output the first time you make a call.
+Built, installed, and iterated on against a real Samsung tablet over
+several rounds of on-device testing — not just a compile-and-hope build.
+The call screen in particular has been through multiple real-device
+debugging passes (see "Non-obvious gotchas" below for what that surfaced).
 
 ## What's implemented
 
@@ -24,11 +21,26 @@ Samsung tablet, and watch the logcat output the first time you make a call.
 - Character picker (Red One / Blue Bolt / Rosie) + language dropdown
   (English/Telugu/Marathi, matching whatever `/api/status` reports as available)
 - Voice call screen: connects to the LiveKit room, native mic/speaker audio,
-  mic mute toggle. Agent state is simplified to "speaking" vs "listening" —
-  the richer listening/thinking/speaking split the web UI gets needs the
-  LiveKit voice-assistant attribute protocol, which this doesn't read yet.
+  mic mute toggle, screen stays awake for the duration of the call
+  (`FLAG_KEEP_SCREEN_ON` — a locked/dimmed screen otherwise pauses the
+  activity and drops the mic mid-call). Full listening/thinking/speaking
+  agent state, read from the same `lk.agent.state` participant attribute the
+  web app's `useVoiceAssistant()` hook uses (see "Non-obvious gotchas").
+- An animated Canvas-drawn mascot per character (`ui/Mascot.kt`) — a native
+  port of the web app's `agent-character.tsx`: blinking eyes, a talking
+  mouth, swinging arms/legs, a distinct "thinking" pose (hand to chin, eyes
+  glancing, bouncing thought dots) separate from "listening" (pulsing radar
+  rings), and Red One's signature grumpy fold. Same mascot also appears
+  (idle) on the character-picker screen.
+- A faint animated balloon field behind the call screen (`ui/BalloonField.kt`,
+  ported from the web app's `balloon-field.tsx`).
 - Parent dashboard: PIN gate, time limit, story text, PDF upload
 - Session time-limit enforcement (ends the call automatically, mirroring the web app)
+- Voice recognition (the agent remembering the child by name across calls)
+  is a **backend-only** feature — see the main README's
+  [Voice recognition](../README.md#voice-recognition) section. Nothing to
+  build or configure here; the personalized greeting just arrives over the
+  same audio track playback this app already does.
 
 ## Opening it
 
@@ -78,6 +90,61 @@ yourself and put it on the tablet directly.
    over the existing app, keeping its saved server address) or just repeat
    step 2 and confirm the "replace existing app" prompt.
 
+### Troubleshooting: "No connected devices!" / adb doesn't see the tablet
+
+This is the single most common snag with the USB + adb install path, and
+it's almost always the same cause: **the tablet is plugged in, but USB
+debugging isn't turned on yet.** Plain USB file-transfer mode (what a
+tablet uses by default when you plug it in) and USB *debugging* mode
+(what `adb` needs) are two different things — being able to see the
+tablet's files on your computer doesn't mean `adb` can talk to it.
+
+Fix it in order — most people only need step 1–4:
+
+1. **Unlock Developer Options** (skip if you've done this before): on the
+   tablet, go to **Settings → About tablet**, find **Build number**, and
+   tap it **7 times in a row**. You'll see a small message counting down
+   ("You are now 3 steps away from being a developer...") and then
+   "You are now a developer!"
+2. **Turn on USB debugging**: go to **Settings → Developer options**
+   (it's a new menu that appeared after step 1, usually near the bottom of
+   Settings) and turn on **USB debugging**.
+3. **Unplug the USB cable and plug it back in.** This matters — Android
+   needs to renegotiate the connection now that debugging is enabled; it
+   won't switch modes on its own while already plugged in.
+4. **Unlock the tablet's screen and look at it.** A popup should appear:
+   *"Allow USB debugging?"* with a long string of letters/numbers (your
+   computer's ID) underneath. Tick **"Always allow from this computer"**
+   and tap **Allow**. If you don't see this popup, it may be hidden behind
+   the lock screen — make sure the tablet is unlocked and awake.
+5. **Check it worked**, from a terminal on your computer:
+   ```bash
+   adb devices
+   ```
+   You want to see your tablet listed with the word `device` next to it,
+   like:
+   ```
+   List of devices attached
+   R58N30ABCDE     device
+   ```
+   - If the list is **empty** — go back to step 2, the toggle can silently
+     reset if you plugged in before turning it on.
+   - If it says `unauthorized` instead of `device` — you missed the popup
+     in step 4; unlock the tablet and look again.
+   - If it's still empty after re-checking everything above, try:
+     ```bash
+     adb kill-server && adb start-server && adb devices
+     ```
+     which restarts adb's background process — sometimes it just gets
+     into a stuck state and this clears it.
+   - Still nothing? Try a different USB cable or port. Some cheap cables
+     only carry power, not data, and will never work for this even though
+     the tablet still charges through them.
+
+Once `adb devices` shows your tablet as `device`, run
+`./gradlew installDebug` (or `adb install -r app/build/outputs/apk/debug/app-debug.apk`)
+again and it should go through.
+
 ## Publishing a build as a GitHub Release (optional)
 
 If you want a downloadable link instead of building locally every time —
@@ -107,11 +174,17 @@ release tags aren't meant to be overwritten in place.
 ## HTTPS / the local CA
 
 The backend's `ENABLE_HTTPS=1` mode (see the main README) uses a self-signed
-local CA. This app only trusts *system* and *user-installed* certificates
-(`res/xml/network_security_config.xml`) — it does **not** bundle a copy of
-the CA into the APK, deliberately, since that CA is regenerated if the
-server's `caddy_data` volume is ever recreated and a baked-in cert would go
-stale. Install the same CA on the tablet that you'd install for a browser:
+local CA. `res/raw/story_teller_ca.crt` bundles a snapshot of that CA
+directly into the APK (trusted via `res/xml/network_security_config.xml`),
+so a fresh install works over `https://` with no manual cert-install step —
+*system* and *user-installed* certificates are still trusted too, as a
+fallback.
+
+The one case that still needs a manual step: if the server's `caddy_data`
+volume is ever recreated, a **new** CA gets generated, and the bundled one
+in an already-built APK goes stale. Either rebuild the app with a fresh copy
+of the cert in `res/raw/`, or install the new CA the manual way, same as
+for a browser:
 
 ```bash
 docker compose exec app cat /data/caddy/pki/authorities/local/root.crt
@@ -121,12 +194,31 @@ Transfer that file to the tablet and add it under Settings → Security →
 Encryption & credentials → Install a certificate → CA certificate, then
 enter `https://<server-address>:8091` in the app's server-setup screen.
 
-## Known gaps (this was a first pass, not a full port)
+## Non-obvious gotchas worth knowing before touching related code
 
-- No screenshot/visual mascot animation — the call screen is a plain colored
-  circle that pulses when the agent speaks, not the character art frontend/
-  has. Swapping in real art or a Lottie/Compose animation is a separate pass.
-- Agent state is speaking-vs-not, not the full listening/thinking/speaking
-  split (see above).
+- **`Mascot.kt`/`BalloonField.kt` deliberately don't use Compose's
+  `animateFloat`/`infiniteRepeatable` APIs.** Those respect the OS-level
+  "Animator duration scale" developer setting (a real accessibility feature,
+  sometimes also dialed down by OEM battery savers) — when it's off, every
+  Compose animation in every app on the phone goes instant/frozen. That's
+  exactly what made the mascot look completely static on a real test device
+  even though the underlying agent-state detection was working correctly.
+  Every gesture is instead driven by a manually-ticked `withFrameNanos`
+  timer and plain trigonometry, which is immune to that setting — don't
+  reintroduce `animateFloat` for anything the child is meant to actually
+  see move.
+- **Agent state comes from the `lk.agent.state` participant attribute**
+  (`LiveKitManager.kt`), not from `RoomEvent.ActiveSpeakersChanged`. The
+  older audio-level-heuristic approach can't distinguish "thinking" from
+  "listening" at all, and is flaky about "speaking" too (a quiet beat
+  mid-sentence can make it look stuck) — this is why the mouth used to look
+  frozen mid-call. `Participant.agentAttributes.lkAgentState` is the
+  authoritative signal the web app's `useVoiceAssistant()` hook also reads.
+
+## Known gaps
+
+- No live audio-level lip sync — the mouth flutters on a steady timer while
+  speaking rather than reacting to actual amplitude (LiveKit Android does
+  expose `Participant.audioLevel`, just not wired up yet).
 - No wake-word support.
 - Launcher icon is a placeholder solid-color shape, not real character art.
