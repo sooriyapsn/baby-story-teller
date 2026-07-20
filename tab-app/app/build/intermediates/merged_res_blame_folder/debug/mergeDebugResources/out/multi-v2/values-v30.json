@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.storyteller.app-mergeDebugResources-48:/values-v30/values-v30.xml",
+            "map": [
+                {
+                    "source": "/home/sooriya-neerukonda/.gradle/caches/8.13/transforms/1f6f58f896e3dc362f79fc7db044e903/transformed/material3-release/res/values-v30/values-v30.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "72",
+                        "endOffsets": "123"
+                    }
+                }
+            ]
+        }
+    ]
+}
