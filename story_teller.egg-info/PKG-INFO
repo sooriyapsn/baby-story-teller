@@ -2,8 +2,10 @@ Metadata-Version: 2.4
 Name: story-teller
 Version: 0.1.0
 Summary: A self-hosted, local-only voice storyteller for kids: a single supervised process bundling LiveKit Agents, llama.cpp, Nemotron STT, and Kokoro TTS.
+License: MIT
 Requires-Python: >=3.11
 License-File: LICENCE
+License-File: LICENSE
 Requires-Dist: livekit-agents[openai,silero,turn-detector]~=1.3
 Requires-Dist: livekit-plugins-noise-cancellation~=0.2
 Requires-Dist: livekit-api>=0.8

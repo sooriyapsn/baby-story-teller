@@ -361,3 +361,12 @@ than sitting on.
 - Kokoro TTS: <https://github.com/hexgrad/kokoro>
 - faster-whisper (Whisper fallback): <https://github.com/SYSTRAN/faster-whisper>
 - livekit-wakeword ("hey livekit" detection): <https://github.com/livekit/livekit-wakeword>
+
+## License
+
+MIT — see [LICENSE](LICENSE). This project started as a fork of
+[ShayneP/local-voice-ai](https://github.com/ShayneP/local-voice-ai), itself
+built on LiveKit's MIT-licensed `agent-starter-python`/`agent-starter-react`
+templates (see [Project history](#project-history)); the original copyright
+notice is retained in `LICENSE` per the MIT license's terms, alongside the
+copyright for everything added since.
