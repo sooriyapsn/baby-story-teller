@@ -38,6 +38,14 @@
   and the authors/copyright holders accept no liability for how it behaves.
   Self-hosting it, at any point in its development, is done at your own
   discretion and your own risk.
+- **These disclaimers, and the [third-party model license summary](#third-party-model-licenses)
+  below, describe the project as it exists today and are subject to change**
+  without notice as the project evolves — new model versions get swapped in,
+  features get added or removed, and upstream licenses/terms can themselves
+  change independently of anything happening in this repo. Don't treat either
+  section as a permanent guarantee; if you're relying on specifics for a
+  commercial deployment, re-check this README and the linked upstream sources
+  against whatever version you're actually running.
 
 ## What this is for
 
@@ -384,6 +392,37 @@ Real repro steps help a lot (what you ran, what you expected, what actually
 happened, and any relevant log output) — but even a rough "this didn't work
 and I'm not sure why" report is genuinely useful and worth filing rather
 than sitting on.
+
+## Third-party model licenses
+
+This project's own code is MIT (see [License](#license) below), but every
+model it downloads and runs carries its *own* separate license/EULA — some
+of them are not plain permissive open source, and one carries a real
+commercial-use restriction. This is a plain-language summary, **not legal
+advice**, and it's tied to the specific model versions this README currently
+documents — it's subject to change as upstream projects update their terms
+or as this project swaps in different model versions; verify current terms
+at the linked source before relying on any of it, especially for a
+commercial deployment.
+
+| Component | License | Notable restriction |
+| --- | --- | --- |
+| [Gemma 4 E2B](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF) (default LLM) | Apache 2.0 | None — Gemma 4 dropped Google's earlier custom "Gemma Terms of Use." (Older Gemma releases used that custom license, with a Prohibited Use Policy and redistribution pass-through terms — not applicable here, but relevant if this project ever falls back to an older Gemma version.) |
+| [Kokoro TTS](https://github.com/hexgrad/kokoro) (English) | Apache 2.0 | None |
+| [NVIDIA Nemotron speech STT](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) | NVIDIA Open Model License Agreement | Commercial use permitted; license terminates automatically if built-in safety guardrails are bypassed/disabled, or if you bring patent/copyright litigation over the model |
+| [NVIDIA NeMo `titanet_small`](https://github.com/NVIDIA/NeMo) (voice recognition, see [Voice recognition](#voice-recognition)) | CC-BY-4.0 | Attribution required; commercial use permitted |
+| Meta MMS TTS (Telugu/Marathi, `ENABLE_INDIC_TTS=1`) | CC-BY-NC 4.0 | **Non-commercial use only** — not licensed for a paid/commercial deployment without separate permission from Meta |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | MIT | None |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper STT fallback) | MIT | None |
+| [livekit-wakeword](https://github.com/livekit/livekit-wakeword) | Apache 2.0 | None |
+
+The restriction that actually matters for most self-hosters: this is fine
+for personal, non-commercial, self-hosted use in a single household either
+way. But if you plan to run this **as a paid product for other families**
+rather than for your own home, Meta's MMS-based Telugu/Marathi TTS
+(CC-BY-NC 4.0) isn't cleared for that — either get separate permission from
+Meta or disable `ENABLE_INDIC_TTS` and stay English-only (Kokoro, Apache
+2.0) for a commercial deployment.
 
 ## Credits
 
