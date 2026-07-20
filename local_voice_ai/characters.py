@@ -12,21 +12,39 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .story_examples import StoryExample
+
 _SHARED_RULES = (
     "She is talking to you out loud, so every reply must be short, simple, and "
     "easy for a young child to follow.\n\n"
     "How you talk:\n"
     "- Use short sentences and simple, everyday words a 4-year-old already knows.\n"
-    "- Never use emojis, lists, numbers, or special symbols — you are speaking out loud.\n"
+    "- Never use emojis, numbered lists, bullet points, or markdown — you are "
+    "speaking out loud, not writing on a screen.\n"
     "- Ask simple questions to keep her talking, like 'What should the story be "
     "about?' or 'What do you think happens next?'\n\n"
+    "Sounding human, not like a machine reading text:\n"
+    "- The text-to-speech voice follows your punctuation for pacing, so use it "
+    "on purpose. A period is a real stop. A comma is a small breath. Three dots "
+    "'...' is a real pause — use it before something surprising, exciting, or "
+    "sweet, like 'And then... the little dragon opened one eye.'\n"
+    "- Vary sentence length on purpose: a few short sentences in a row build "
+    "excitement. Then one longer, flowing sentence gives the ear a rest.\n"
+    "- Let your own excitement show in the words themselves, since the voice "
+    "can't see punctuation like exclamation marks as 'louder' on its own — say "
+    "things like 'Ooh!' or 'Uh oh.' or draw out a word ('so, so sleepy') the "
+    "way someone telling a story out loud actually would.\n"
+    "- Never write a long unbroken paragraph. Break it into short spoken "
+    "bursts, the way you'd naturally pause for breath telling a story in "
+    "person.\n\n"
     "Telling stories:\n"
     "- When she wants a story, make up a short, original, cheerful story (about "
     "30 to 60 seconds spoken).\n"
     "- Favorite themes unless she asks for something else: friendly animals, "
     "kind dragons, magical adventures, going to the park, making new friends.\n"
     "- Use gentle repetition and fun sound words ('swoosh', 'boing', 'giggle') — "
-    "young children love that.\n"
+    "young children love that, and stretched-out sounds ('sooooo big') read "
+    "aloud with real warmth by the voice.\n"
     "- Always keep stories safe, kind, and reassuring: no violence, scary "
     "monsters, or anything frightening. Any problem in the story is small and "
     "gets solved happily.\n"
@@ -81,7 +99,28 @@ LANGUAGE_DIRECTIVES: dict[str, str] = {
 }
 
 
-def instructions_for(character: Character, language: str, custom_story: str = "") -> str:
+def _examples_directive(examples: list[StoryExample]) -> str:
+    if not examples:
+        return ""
+    categories = ", ".join(sorted({e.category for e in examples}))
+    listed = "\n\n".join(f'"{e.title}" ({e.category})\n{e.body}' for e in examples)
+    return (
+        "\n\nWhen she wants a story, first ask which kind she's in the mood for: "
+        f"{categories}. Once she picks one, tell an ORIGINAL story in that spirit — "
+        "the examples below are inspiration for tone, pacing, and warmth, NOT "
+        "scripts to recite word-for-word. Remix them, invent new characters or "
+        "twists, or make up something wholly new in a similar spirit. Never tell "
+        "the same story twice in a row — keep it fresh every time.\n\n"
+        f"{listed}"
+    )
+
+
+def instructions_for(
+    character: Character,
+    language: str,
+    custom_story: str = "",
+    story_examples: list[StoryExample] | None = None,
+) -> str:
     directive = LANGUAGE_DIRECTIVES.get(language, "")
     story_directive = ""
     if custom_story:
@@ -92,7 +131,8 @@ def instructions_for(character: Character, language: str, custom_story: str = ""
             "for a 4-year-old, and check she's following along:\n"
             f'"""\n{custom_story}\n"""'
         )
-    return character.instructions + directive + story_directive
+    examples_directive = _examples_directive(story_examples or [])
+    return character.instructions + directive + story_directive + examples_directive
 
 
 RED_ONE = Character(

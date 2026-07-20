@@ -1,0 +1,15 @@
+[Unit]
+Description=Story Teller wake listener (lets the phone/tablet app start the Docker container remotely)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# %h expands to the invoking user's home directory — adjust this path if
+# the repo lives somewhere else. See wake-listener/README.md.
+ExecStart=/usr/bin/python3 %h/Projects/story-teller/wake-listener/wake_listener.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

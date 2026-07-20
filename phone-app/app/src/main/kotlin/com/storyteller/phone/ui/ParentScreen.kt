@@ -1,4 +1,4 @@
-package com.storyteller.app.ui
+package com.storyteller.phone.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,8 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.storyteller.app.data.ApiClient
-import com.storyteller.app.data.ServerConfig
+import com.storyteller.phone.data.ApiClient
+import com.storyteller.phone.data.ServerConfig
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
