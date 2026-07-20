@@ -20,3 +20,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in list(os.environ):
         if key.startswith(_OUR_ENV_PREFIXES):
             monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_pin_lockout() -> None:
+    """PIN-attempt lockout state is module-level (see parent_settings.check_pin)
+    so it survives across a real supervisor's lifetime — reset it per test so
+    one test's wrong-PIN attempts can't lock out another's correct one."""
+    from local_voice_ai import parent_settings
+
+    parent_settings._failed_pin_attempts.clear()

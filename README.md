@@ -6,46 +6,29 @@
 
 ## Disclaimers
 
-- **This is a hobby project, not a certified children's product.** It's built
-  and maintained by one person for personal/family use and shared as open
-  source — there's no company, child-safety review board, or content-rating
-  process behind it. If you self-host this for a child, you (the parent/adult
-  running the container) are the safety layer: review what a character says,
-  keep an ear on early sessions, and treat the LLM's exact wording per turn as
-  unpredictable even with fixed characters and a curated story/lesson.
-  Nothing here is a substitute for supervision, and it isn't intended to
-  replace judgment about what's appropriate for your own kid.
-- **This is a work in progress — expect things to break.** It's under active,
-  ongoing development; a fresh checkout or a new Docker pull can behave
-  differently than the last one, edge cases in voice recognition/TTS
-  pacing/the parent dashboard are known to exist and more are likely
-  undiscovered, and no formal QA process stands behind any given commit.
-  Don't run it somewhere a failure would be a serious problem (e.g.,
-  completely unattended, or as the sole entertainment for a long car ride
-  with no fallback).
-- **Found a bug or something that seems off? Please file it, don't just work
-  around it.** Open an issue at
-  [sooriyapsn/baby-story-teller/issues](https://github.com/sooriyapsn/baby-story-teller/issues) —
-  real repro steps (what you ran, what you expected, what happened, relevant
-  logs) help it get fixed faster, but even a rough "this didn't work" report
-  is worth filing. This is maintained best-effort by one person, not a team
-  with an SLA, but issues raised do get looked at and fixed — that's the
-  actual workflow here, not a formality.
-- **Provided as-is, under the MIT license, with no warranty of any kind** —
-  see [LICENSE](LICENSE). In plain terms: this software is still actively
-  being changed, nothing here is guaranteed to be complete, correct, or fit
-  for any particular purpose (including unsupervised use around a child),
-  and the authors/copyright holders accept no liability for how it behaves.
-  Self-hosting it, at any point in its development, is done at your own
-  discretion and your own risk.
-- **These disclaimers, and the [third-party model license summary](#third-party-model-licenses)
-  below, describe the project as it exists today and are subject to change**
-  without notice as the project evolves — new model versions get swapped in,
-  features get added or removed, and upstream licenses/terms can themselves
-  change independently of anything happening in this repo. Don't treat either
-  section as a permanent guarantee; if you're relying on specifics for a
-  commercial deployment, re-check this README and the linked upstream sources
-  against whatever version you're actually running.
+- **Hobby project, not a certified children's product.** No company, review
+  board, or content rating stands behind this — the adult running it is the
+  actual safety layer. Content safety is prompt-only (see below): there's no
+  secondary filter on what the LLM says, so don't treat a session as fully
+  unsupervised, especially the first few times.
+- **Work in progress — expect breakage.** Actively developed, no formal QA
+  gate on any given commit. Found a bug? [Open an issue](https://github.com/sooriyapsn/baby-story-teller/issues)
+  rather than working around it — best-effort, but it gets looked at.
+- **Kid-safety specifics:**
+  - Session time limit is enforced twice: client-side (countdown UI) and
+    server-side (`local_voice_ai/agent.py::_enforce_time_limit` ends the
+    room itself), so a modified or raw client can't skip it.
+  - The parent PIN (`PARENT_PIN`, default `1234` — change it) now locks out
+    a client after 5 wrong attempts for 5 minutes.
+  - No moderation layer beyond the system prompt — a small local LLM can in
+    principle be steered off-script.
+  - No transcript/recording exists for a parent to review after the fact.
+  - A recognized child's name + voice embedding are stored in plaintext
+    (`known-speakers.json`), not encrypted at rest.
+- **Provided as-is under MIT, no warranty** — see [LICENSE](LICENSE).
+- **All of the above, and the [third-party license summary](#third-party-model-licenses),
+  describe the project today and are subject to change without notice** —
+  re-check before relying on specifics, especially for commercial use.
 
 ## What this is for
 
