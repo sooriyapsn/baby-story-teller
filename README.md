@@ -4,6 +4,40 @@
   <p>Real-time voice AI — STT, LLM, TTS — running entirely in <strong>one container</strong> on your own network, supervised by a single Python parent process. Powered by <a href="https://docs.livekit.io/agents">LiveKit Agents</a>.</p>
 </div>
 
+## What this is for
+
+Story Teller is built for one purpose: giving a young child (think preschool /
+early-elementary age) a safe, screen-light way to hear stories and have simple
+voice conversations with a character she picks — without a live person, a
+cloud account, or an open-ended chatbot on the other end.
+
+- **Kid-facing, voice-only.** No typing, no chat window, no video, no camera —
+  she talks, a character talks back. Three fixed personalities (a grumpy-but-
+  sweet bear, an energetic kid, and a gentle storyteller) each with their own
+  voice, so it stays predictable and easy for a small child to navigate.
+- **Bilingual by design.** English, Telugu, and Marathi — meant to help a kid
+  hear and pick up a home language, not just default to English.
+- **Parents stay in control.** A PIN-gated dashboard sets a play-time limit
+  (the session ends itself), and lets a parent paste in or upload a specific
+  story/lesson for the character to teach, so the content isn't just "whatever
+  a generic LLM feels like saying."
+- **Fully local and private.** Everything — speech recognition, the language
+  model, text-to-speech — runs on your own hardware in one container. No
+  conversation audio or transcript ever leaves your network, and it keeps
+  working with no internet connection once the models are downloaded.
+
+## Project history
+
+This started as a fork of [ShayneP/local-voice-ai](https://github.com/ShayneP/local-voice-ai)
+(itself built on LiveKit's generic `agent-starter-python`/`agent-starter-react`
+templates for a general-purpose voice AI assistant — video, screen share, text
+chat, the works). It's since been rewritten into a single-purpose kids' app:
+the character system, bilingual TTS, the parent dashboard, and the voice-only
+interaction model are all new, and the generic-assistant features that don't
+apply here (camera, screen share, typed chat) have been removed. Very little
+of the original template's UI or feature set remains — see the commit history
+for the specifics.
+
 ## Overview
 
 Everything runs as managed children of one Python supervisor (`python -m local_voice_ai serve`):
