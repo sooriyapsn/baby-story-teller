@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "story-teller"
 version = "0.1.0"
 description = "A self-hosted, local-only voice storyteller for kids: a single supervised process bundling LiveKit Agents, llama.cpp, Nemotron STT, and Kokoro TTS."
+license = { text = "MIT" }
 requires-python = ">=3.11"
 
 dependencies = [

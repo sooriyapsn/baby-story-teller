@@ -1,4 +1,5 @@
 LICENCE
+LICENSE
 README.md
 pyproject.toml
 local_voice_ai/__init__.py
@@ -7,8 +8,12 @@ local_voice_ai/agent.py
 local_voice_ai/api.py
 local_voice_ai/characters.py
 local_voice_ai/config.py
+local_voice_ai/known_speakers.py
 local_voice_ai/parent_settings.py
+local_voice_ai/speaker_id.py
+local_voice_ai/story_examples.py
 local_voice_ai/supervisor.py
+local_voice_ai/voice_modulation.py
 local_voice_ai/wakeword.py
 local_voice_ai/services/__init__.py
 local_voice_ai/services/indic_tts/__init__.py
@@ -27,6 +32,8 @@ story_teller.egg-info/requires.txt
 story_teller.egg-info/top_level.txt
 tests/test_api.py
 tests/test_config.py
+tests/test_known_speakers.py
 tests/test_main.py
 tests/test_supervisor.py
+tests/test_voice_modulation.py
 tests/test_wakeword.py
