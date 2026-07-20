@@ -66,8 +66,18 @@ Command line:
 
 ## Installing on your tablet
 
-There's no Play Store listing or CI-built release — you build the APK
-yourself and put it on the tablet directly.
+**Fastest way — grab the auto-built APK:** every push to `main` rebuilds
+this app and republishes it at the same link, so this always has the
+latest build. Requires **Android 8.0 (Oreo, API 26) or newer**
+(`minSdk = 26` in `app/build.gradle.kts`) — older tablets can't install it:
+
+> **[Download tab-app-debug.apk](https://github.com/sooriyapsn/baby-story-teller/releases/download/debug-latest/tab-app-debug.apk)**
+
+Open that link in the tablet's browser, let it download, then skip to
+step 3 below. (See "Publishing a build as a GitHub Release" further down
+for how this link is kept up to date.)
+
+Building it yourself instead:
 
 1. Build it:
    ```bash
@@ -155,16 +165,26 @@ Once `adb devices` shows your tablet as `device`, run
 `./gradlew installDebug` (or `adb install -r app/build/outputs/apk/debug/app-debug.apk`)
 again and it should go through.
 
-## Publishing a build as a GitHub Release (optional)
+## Publishing a build as a GitHub Release
 
-If you want a downloadable link instead of building locally every time —
-e.g. so the APK is one click away from any device's browser — attach it to
-a GitHub Release. **Don't commit the `.apk` file into the repo itself**:
-it's a ~65 MB binary, and git keeps every version forever, so the repo only
-grows from there. Releases attach binaries without that cost.
+`.github/workflows/android.yml` builds this app (and `phone-app`) on every
+push to `main` that touches either directory, then republishes both APKs as
+assets on a single fixed-tag release, `debug-latest` — deleting and
+recreating that release each time, so the same download link always points
+at the latest build:
 
-With the [`gh` CLI](https://cli.github.com/) installed and logged in
-(`gh auth login`):
+- Phone: https://github.com/sooriyapsn/baby-story-teller/releases/download/debug-latest/phone-app-debug.apk
+- Tablet: https://github.com/sooriyapsn/baby-story-teller/releases/download/debug-latest/tab-app-debug.apk
+
+Needs the repo's Settings → Actions → General → Workflow permissions set to
+"Read and write permissions" — that's what lets the workflow's
+`gh release create` step publish the release.
+
+### Publishing a one-off release manually (optional)
+
+To publish a specific build without pushing to `main` — e.g. a version you
+want to keep around under its own tag instead of it being overwritten —
+use the [`gh` CLI](https://cli.github.com/) directly (`gh auth login` first):
 ```bash
 ./gradlew assembleDebug
 gh release create tab-app-v1 app/build/outputs/apk/debug/app-debug.apk \
@@ -177,9 +197,8 @@ directly, same "allow unknown sources" prompt as any sideloaded APK.
 
 Without `gh`: build the APK, then on GitHub → **Releases** → **Draft a new
 release** → drag the `.apk` file into the assets box → **Publish release**.
-
-Re-publish after a rebuild by creating a new release (`tab-app-v2`, etc.) —
-release tags aren't meant to be overwritten in place.
+Give it its own tag (`tab-app-v2`, etc.) rather than reusing `debug-latest`,
+which the CI workflow expects to own.
 
 ## HTTPS / the local CA
 

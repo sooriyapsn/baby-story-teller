@@ -35,8 +35,37 @@ jobs:
 
       - run: ./gradlew assembleDebug --no-daemon
 
+      # Named per-app so both can sit as distinct assets on the same release.
+      - run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/${{ matrix.app }}-debug.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.app }}-debug
-          path: ${{ matrix.app }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ matrix.app }}/app/build/outputs/apk/debug/${{ matrix.app }}-debug.apk
           if-no-files-found: error
+
+  # Publishes both APKs as assets on a single, fixed-tag release so a phone's
+  # browser can download the raw .apk directly (no GitHub login, no zip) and
+  # tap it to install. Overwrites the same release/tag on every push to main.
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: "*-debug"
+          merge-multiple: true
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete debug-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create debug-latest artifacts/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Latest debug APKs" \
+            --notes "Auto-built from ${{ github.sha }}. Open this page on the phone/tablet, download phone-app-debug.apk or tab-app-debug.apk, and tap to install." \
+            --prerelease
