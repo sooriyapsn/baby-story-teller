@@ -42,6 +42,68 @@ Command line:
 ./gradlew installDebug      # with a device/emulator connected via adb
 ```
 
+## Installing on your tablet
+
+There's no Play Store listing or CI-built release — you build the APK
+yourself and put it on the tablet directly.
+
+1. Build it:
+   ```bash
+   ./gradlew assembleDebug
+   ```
+   Produces `app/build/outputs/apk/debug/app-debug.apk`.
+
+2. Get it onto the tablet, either way:
+   - **USB + adb** (fastest, and lets you see logcat while testing):
+     ```bash
+     adb install -r app/build/outputs/apk/debug/app-debug.apk
+     ```
+     Needs the tablet connected by USB with Developer Options → USB
+     debugging turned on (tap the tablet's Build Number 7 times under
+     Settings → About tablet to unlock Developer Options).
+   - **No cable**: copy the APK to the tablet any way you'd move a file
+     (a USB drive, a cloud-storage app, emailing it to yourself) and open
+     it from the Files app on the tablet.
+
+3. **Install from unknown sources**: since this isn't from the Play Store,
+   Android will block the install the first time and prompt you to allow
+   it for whichever app you used to open the APK (Files, Chrome, etc.) —
+   follow that prompt, then try opening the APK again.
+
+4. First launch: grant the microphone permission when asked, then enter
+   the server address on the setup screen (see "HTTPS / the local CA"
+   below if you're running the server with `ENABLE_HTTPS=1`).
+
+5. Reinstalling after a rebuild: `adb install -r ...` (the `-r` reinstalls
+   over the existing app, keeping its saved server address) or just repeat
+   step 2 and confirm the "replace existing app" prompt.
+
+## Publishing a build as a GitHub Release (optional)
+
+If you want a downloadable link instead of building locally every time —
+e.g. so the APK is one click away from any device's browser — attach it to
+a GitHub Release. **Don't commit the `.apk` file into the repo itself**:
+it's a ~65 MB binary, and git keeps every version forever, so the repo only
+grows from there. Releases attach binaries without that cost.
+
+With the [`gh` CLI](https://cli.github.com/) installed and logged in
+(`gh auth login`):
+```bash
+./gradlew assembleDebug
+gh release create tab-app-v1 app/build/outputs/apk/debug/app-debug.apk \
+  --title "Story Teller — Tablet v1" \
+  --notes "Debug build for sideloading. See tab-app/README.md for install steps."
+```
+That prints a URL — open it on the tablet's browser (or send it via
+whatever you like) and tap the `.apk` link to download and install
+directly, same "allow unknown sources" prompt as any sideloaded APK.
+
+Without `gh`: build the APK, then on GitHub → **Releases** → **Draft a new
+release** → drag the `.apk` file into the assets box → **Publish release**.
+
+Re-publish after a rebuild by creating a new release (`tab-app-v2`, etc.) —
+release tags aren't meant to be overwritten in place.
+
 ## HTTPS / the local CA
 
 The backend's `ENABLE_HTTPS=1` mode (see the main README) uses a self-signed

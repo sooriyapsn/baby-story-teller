@@ -25,6 +25,7 @@ from livekit.plugins import openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
 from .characters import CHARACTERS, Character, get_character, instructions_for
+from .story_examples import StoryExample, sample_story_examples
 
 logger = logging.getLogger("agent")
 
@@ -32,8 +33,16 @@ load_dotenv(".env.local")
 
 
 class Assistant(Agent):
-    def __init__(self, character: Character, language: str = "en", custom_story: str = "") -> None:
-        super().__init__(instructions=instructions_for(character, language, custom_story))
+    def __init__(
+        self,
+        character: Character,
+        language: str = "en",
+        custom_story: str = "",
+        story_examples: list[StoryExample] | None = None,
+    ) -> None:
+        super().__init__(
+            instructions=instructions_for(character, language, custom_story, story_examples)
+        )
 
 
 server = AgentServer()
@@ -201,7 +210,10 @@ async def my_agent(ctx: JobContext) -> None:
         preemptive_generation=True,
     )
 
-    await session.start(agent=Assistant(character, language, custom_story), room=ctx.room)
+    story_examples = sample_story_examples(language)
+    await session.start(
+        agent=Assistant(character, language, custom_story, story_examples), room=ctx.room
+    )
     await ctx.connect()
 
     # Restated here, not just in the system prompt: the model otherwise

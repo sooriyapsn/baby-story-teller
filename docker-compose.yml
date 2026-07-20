@@ -64,6 +64,9 @@ services:
     volumes:
       - models:/models
       - caddy_data:/data
+      # Bind-mounted (not baked into the image) so edits on the host take
+      # effect on the next session — no rebuild needed. See story_examples.py.
+      - ./story_examples.md:/app/story_examples.md:ro
     healthcheck:
       test:
         - CMD-SHELL
