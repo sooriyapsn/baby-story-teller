@@ -219,6 +219,7 @@ cd frontend && pnpm install && pnpm run dev
 │     ├─ whisper/server.py
 │     └─ kokoro/server.py
 ├─ frontend/               # Next.js (configured for static export)
+├─ tab-app/                # Native Android client (Kotlin/Compose) — see tab-app/README.md
 ├─ tests/                  # pytest suite
 ├─ Dockerfile              # multi-stage build
 ├─ docker-compose.yml      # one service (CPU default)
