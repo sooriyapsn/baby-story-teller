@@ -5,6 +5,7 @@ names — the supervisor spawns the inference children on loopback ports, so
 this is correct for both single-image deployment and bare-metal local runs.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import time
 
 import httpx
 from dotenv import load_dotenv
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -20,16 +22,28 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
+    function_tool,
 )
 from livekit.plugins import openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
+from . import known_speakers, speaker_id
 from .characters import CHARACTERS, Character, get_character, instructions_for
 from .story_examples import StoryExample, sample_story_examples
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+
+
+class VoiceIdState:
+    """Session-scoped bridge between the raw-audio tap in my_agent() (which
+    computes an embedding per utterance) and the Assistant's remember_name
+    tool below (which is what actually knows the name to save it under).
+    The LLM never sees the embedding itself — only that a name was given."""
+
+    def __init__(self) -> None:
+        self.latest_embedding: list[float] | None = None
 
 
 class Assistant(Agent):
@@ -39,10 +53,24 @@ class Assistant(Agent):
         language: str = "en",
         custom_story: str = "",
         story_examples: list[StoryExample] | None = None,
+        voice_id: VoiceIdState | None = None,
     ) -> None:
         super().__init__(
             instructions=instructions_for(character, language, custom_story, story_examples)
         )
+        self._voice_id = voice_id
+
+    @function_tool
+    async def remember_name(self, name: str) -> str:
+        """Call this the moment she states or confirms her name for the
+        first time in this conversation, so her voice can be recognized and
+        she can be greeted by name next time. Pass exactly the name she
+        gave, nothing else."""
+        name = name.strip()
+        if self._voice_id is not None and self._voice_id.latest_embedding is not None and name:
+            known_speakers.enroll(name, self._voice_id.latest_embedding)
+            logger.info("enrolled voice for name=%s", name)
+        return f"Got it — I'll remember {name}."
 
 
 server = AgentServer()
@@ -105,6 +133,90 @@ def prewarm(proc: JobProcess) -> None:
 
 
 server.setup_fnc = prewarm
+
+
+def _wire_voice_id(
+    ctx: JobContext,
+    assistant: "Assistant",
+    voice_id_state: VoiceIdState,
+    character: Character,
+) -> None:
+    """Tap the child's raw mic audio in parallel with (not instead of) the
+    normal STT/VAD pipeline, to compute a voice embedding per utterance —
+    see local_voice_ai/speaker_id.py. A second, independent
+    ``rtc.AudioStream``/``VADStream`` on the same track is exactly the
+    pattern livekit-agents' own RoomIO uses internally to feed STT, so this
+    doesn't disturb or duplicate anything in the existing pipeline.
+
+    Only the very first utterance of the session is checked against known
+    voices (recognition); every utterance after that just refreshes
+    ``voice_id_state.latest_embedding`` so Assistant.remember_name has
+    something fresh to enroll under whatever name she gives.
+    """
+    state = {"checked_first_utterance": False}
+    # asyncio only holds a weak reference to a task once nothing else does,
+    # which can garbage-collect it mid-run — this keeps a live reference for
+    # as long as the per-utterance consumer task is running.
+    background_tasks: set[asyncio.Task] = set()
+
+    async def _consume_utterances(track: rtc.Track) -> None:
+        from livekit.agents import vad as vad_module
+
+        vad_stream = ctx.proc.userdata["vad"].stream()
+
+        async def _feed() -> None:
+            audio_stream = rtc.AudioStream.from_track(
+                track=track, sample_rate=16000, num_channels=1
+            )
+            try:
+                async for event in audio_stream:
+                    vad_stream.push_frame(event.frame)
+            finally:
+                vad_stream.end_input()
+
+        feed_task = asyncio.create_task(_feed())
+        try:
+            async for event in vad_stream:
+                if event.type != vad_module.VADEventType.END_OF_SPEECH:
+                    continue
+                embedding = speaker_id.frames_to_embedding(event.frames)
+                if embedding is None:
+                    continue
+                voice_id_state.latest_embedding = embedding
+
+                if state["checked_first_utterance"]:
+                    continue
+                state["checked_first_utterance"] = True
+                match = known_speakers.find_best_match(embedding)
+                if match is None:
+                    continue
+                logger.info("recognized returning voice: %s", match.name)
+                new_ctx = assistant.chat_ctx.copy()
+                new_ctx.add_message(
+                    role="system",
+                    content=(
+                        f"You recognize her voice from a previous visit — her name "
+                        f"is {match.name}. Warmly greet her by name and reference "
+                        f"that she's back, staying fully in character as "
+                        f"{character.name}. Do not ask for her name again."
+                    ),
+                )
+                assistant.update_chat_ctx(new_ctx)
+        finally:
+            feed_task.cancel()
+
+    def _on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        if publication.source != rtc.TrackSource.SOURCE_MICROPHONE:
+            return
+        task = asyncio.create_task(_consume_utterances(track))
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    ctx.room.on("track_subscribed", _on_track_subscribed)
 
 
 @server.rtc_session()
@@ -171,6 +283,10 @@ async def my_agent(ctx: JobContext) -> None:
             character.tts_voice if character_id else os.getenv("TTS_VOICE", character.tts_voice)
         )
     tts_api_key = os.getenv("TTS_API_KEY", "no-key-needed")
+    # Kokoro's default pace reads a little quick/flat for storytelling —
+    # slightly slower gives pauses and drawn-out words (see characters.py's
+    # "sounding human" rules) more room to actually land.
+    tts_speed = float(os.getenv("TTS_SPEED", "0.9"))
 
     logger.info(
         "agent session: character=%s language=%s stt=%s/%s llm=%s/%s tts=%s/%s",
@@ -181,6 +297,13 @@ async def my_agent(ctx: JobContext) -> None:
     wake_word = os.getenv("WAKE_WORD", "").strip().lower() in {"1", "true", "yes", "on"}
     wake_word_model = os.getenv("WAKE_WORD_MODEL", "/app/models/wakeword/hey_livekit.onnx")
     wake_word_threshold = float(os.getenv("WAKE_WORD_THRESHOLD", "0.5"))
+
+    # On by default (unlike WAKE_WORD/ENABLE_INDIC_TTS) — recognizing a
+    # returning child and greeting her by name is the whole point of this
+    # feature, so it should just work out of the box; still overridable.
+    voice_id_enabled = os.getenv("VOICE_ID_ENABLED", "true").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
     session = AgentSession(
         stt=openai.STT(base_url=stt_base_url, model=stt_model, api_key=stt_api_key),
@@ -200,6 +323,7 @@ async def my_agent(ctx: JobContext) -> None:
             voice=tts_voice,
             api_key=tts_api_key,
             response_format="wav",
+            speed=tts_speed,
         ),
         # English-only model: smaller and faster than MultilingualModel, and
         # STT stays English/Nemotron regardless of the agent's reply
@@ -211,9 +335,9 @@ async def my_agent(ctx: JobContext) -> None:
     )
 
     story_examples = sample_story_examples(language)
-    await session.start(
-        agent=Assistant(character, language, custom_story, story_examples), room=ctx.room
-    )
+    voice_id_state = VoiceIdState() if voice_id_enabled else None
+    assistant = Assistant(character, language, custom_story, story_examples, voice_id=voice_id_state)
+    await session.start(agent=assistant, room=ctx.room)
     await ctx.connect()
 
     # Restated here, not just in the system prompt: the model otherwise
@@ -226,6 +350,28 @@ async def my_agent(ctx: JobContext) -> None:
         if language in language_names
         else ""
     )
+
+    # Native apps (tab-app, phone-app) send a small "check_in" data message
+    # after their own client-side idle timer fires (they can't tell on their
+    # own whether she's just quiet vs. actually gone — only the server sees
+    # real speech activity via STT/VAD). Only the agent verbally asking
+    # counts as a real check — a client-only silent prompt wouldn't need
+    # this at all.
+    @ctx.room.on("data_received")
+    def _on_data_received(packet) -> None:
+        if packet.topic != "check_in":
+            return
+        session.generate_reply(
+            instructions=(
+                "It's been quiet for a while. Warmly and briefly check if "
+                f"she's still there, staying fully in character as "
+                f"{character.name} — one short sentence, like a caring "
+                f"friend checking in, not an alarm.{greeting_language_hint}"
+            )
+        )
+
+    if voice_id_state is not None:
+        _wire_voice_id(ctx, assistant, voice_id_state, character)
 
     if wake_word:
         # Join deaf, wait for the wake phrase, then wake up and greet.

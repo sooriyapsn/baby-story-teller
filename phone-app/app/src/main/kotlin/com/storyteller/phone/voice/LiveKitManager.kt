@@ -6,6 +6,8 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.LocalParticipant
+import io.livekit.android.room.participant.Participant
+import io.livekit.android.room.types.AgentSdkState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,7 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class AgentState { CONNECTING, LISTENING, AGENT_SPEAKING, DISCONNECTED }
+enum class AgentState { CONNECTING, LISTENING, THINKING, AGENT_SPEAKING, DISCONNECTED }
 
 /**
  * Wraps a LiveKit Room connection for one voice call. This is the whole
@@ -22,11 +24,14 @@ enum class AgentState { CONNECTING, LISTENING, AGENT_SPEAKING, DISCONNECTED }
  * supports it, proper audio-focus/Bluetooth-routing integration), instead
  * of whatever a mobile browser's WebView happens to negotiate.
  *
- * Agent state here is a simplified proxy: "is the agent's audio track
- * currently speaking" vs "not" — not the richer listening/thinking/speaking
- * split the web UI gets via LiveKit's voice-assistant attribute protocol.
- * Good enough for a first native pass; a true 1:1 port would need to read
- * the same participant attributes the web SDK's useVoiceAssistant hook does.
+ * Agent state is read straight from the agent participant's `lk.agent.state`
+ * attribute (exposed here as `Participant.agentAttributes.lkAgentState`) —
+ * the same protocol the web app's `useVoiceAssistant()` hook reads. This
+ * used to be inferred from `RoomEvent.ActiveSpeakersChanged` instead, which
+ * only reflects whether audio is currently above a level threshold: it
+ * can't distinguish "thinking" from "listening" at all, and it's flaky
+ * about "speaking" too (state can lag or stick if a sentence has a quiet
+ * beat), which is why the mascot's mouth used to look stuck mid-call.
  */
 class LiveKitManager(context: Context) {
     private val room: Room = LiveKit.create(context.applicationContext)
@@ -45,19 +50,32 @@ class LiveKitManager(context: Context) {
         _micEnabled.value = true
         _state.value = AgentState.LISTENING
 
+        // Pick up the agent's state as soon as it's already present (it may
+        // have joined and published attributes before our listener below
+        // was wired up).
+        room.remoteParticipants.values.forEach(::applyAgentAttributes)
+
         scope.launch {
             room.events.collect { event ->
                 when (event) {
-                    is RoomEvent.ActiveSpeakersChanged -> {
-                        val agentSpeaking = event.speakers.any { it !is LocalParticipant }
-                        _state.value = if (agentSpeaking) AgentState.AGENT_SPEAKING else AgentState.LISTENING
-                    }
+                    is RoomEvent.ParticipantConnected -> applyAgentAttributes(event.participant)
+                    is RoomEvent.ParticipantAttributesChanged -> applyAgentAttributes(event.participant)
                     is RoomEvent.Disconnected -> {
                         _state.value = AgentState.DISCONNECTED
                     }
                     else -> Unit
                 }
             }
+        }
+    }
+
+    private fun applyAgentAttributes(participant: Participant) {
+        if (participant is LocalParticipant) return
+        _state.value = when (participant.agentAttributes.lkAgentState) {
+            AgentSdkState.Thinking -> AgentState.THINKING
+            AgentSdkState.Speaking -> AgentState.AGENT_SPEAKING
+            AgentSdkState.Listening, AgentSdkState.Idle, AgentSdkState.Initializing -> AgentState.LISTENING
+            AgentSdkState.Unknown, null -> _state.value
         }
     }
 

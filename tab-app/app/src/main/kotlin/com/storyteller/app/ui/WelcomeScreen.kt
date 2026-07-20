@@ -1,6 +1,5 @@
 package com.storyteller.app.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -34,6 +32,7 @@ import com.storyteller.app.data.ALL_LANGUAGES
 import com.storyteller.app.data.ApiClient
 import com.storyteller.app.data.CHARACTERS
 import com.storyteller.app.data.LANGUAGE_LABELS
+import com.storyteller.app.voice.AgentState
 
 @Composable
 fun WelcomeScreen(
@@ -101,10 +100,13 @@ fun WelcomeScreen(
                             modifier = Modifier.padding(16.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(80.dp)
-                                    .background(c.color, CircleShape)
+                            MascotCharacter(
+                                characterDef = c,
+                                // A gentle idle "listening" pose — blinking,
+                                // swaying — so the picker itself feels alive
+                                // instead of a flat color swatch.
+                                agentState = AgentState.LISTENING,
+                                modifier = Modifier.size(120.dp),
                             )
                             Text(
                                 c.displayName,

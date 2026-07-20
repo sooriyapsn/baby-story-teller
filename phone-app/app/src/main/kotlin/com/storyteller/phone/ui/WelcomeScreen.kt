@@ -1,6 +1,5 @@
 package com.storyteller.phone.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -37,6 +35,7 @@ import com.storyteller.phone.data.ALL_LANGUAGES
 import com.storyteller.phone.data.ApiClient
 import com.storyteller.phone.data.CHARACTERS
 import com.storyteller.phone.data.LANGUAGE_LABELS
+import com.storyteller.phone.voice.AgentState
 
 @Composable
 fun WelcomeScreen(
@@ -111,7 +110,11 @@ fun WelcomeScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
-                            Box(modifier = Modifier.size(64.dp).background(c.color, CircleShape))
+                            MascotCharacter(
+                                characterDef = c,
+                                agentState = AgentState.LISTENING,
+                                modifier = Modifier.size(64.dp),
+                            )
                             Column {
                                 Text(c.displayName, style = MaterialTheme.typography.titleMedium)
                                 Text(c.tagline, style = MaterialTheme.typography.bodySmall)

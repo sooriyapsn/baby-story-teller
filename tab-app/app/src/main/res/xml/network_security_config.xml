@@ -2,13 +2,18 @@
 <!--
   Apps default to trusting only system-preinstalled CAs (API 24+); the
   backend's HTTPS cert is issued by Caddy's own local CA (see the main
-  README's "HTTPS" section), which the parent installs into the tablet's
-  user-added trusted credentials once. This config opts back in to trusting
-  that store, matching what a browser already does by default.
+  README's "HTTPS" section). @raw/story_teller_ca bundles that CA directly
+  in the app so it works out of the box with no manual cert-install step —
+  the snapshot taken when this build was made. system/user stay listed too
+  as a fallback: if the server's caddy_data volume is ever recreated (a new
+  CA gets generated then), install the *new* cert into the tablet's
+  user-added trusted credentials the old manual way, or just rebuild the
+  app with the fresh cert copied into res/raw/.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
+            <certificates src="@raw/story_teller_ca" />
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
