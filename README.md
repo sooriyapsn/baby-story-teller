@@ -4,6 +4,41 @@
   <p>Real-time voice AI — STT, LLM, TTS — running entirely in <strong>one container</strong> on your own network, supervised by a single Python parent process. Powered by <a href="https://docs.livekit.io/agents">LiveKit Agents</a>.</p>
 </div>
 
+## Disclaimers
+
+- **This is a hobby project, not a certified children's product.** It's built
+  and maintained by one person for personal/family use and shared as open
+  source — there's no company, child-safety review board, or content-rating
+  process behind it. If you self-host this for a child, you (the parent/adult
+  running the container) are the safety layer: review what a character says,
+  keep an ear on early sessions, and treat the LLM's exact wording per turn as
+  unpredictable even with fixed characters and a curated story/lesson.
+  Nothing here is a substitute for supervision, and it isn't intended to
+  replace judgment about what's appropriate for your own kid.
+- **This is a work in progress — expect things to break.** It's under active,
+  ongoing development; a fresh checkout or a new Docker pull can behave
+  differently than the last one, edge cases in voice recognition/TTS
+  pacing/the parent dashboard are known to exist and more are likely
+  undiscovered, and no formal QA process stands behind any given commit.
+  Don't run it somewhere a failure would be a serious problem (e.g.,
+  completely unattended, or as the sole entertainment for a long car ride
+  with no fallback).
+- **Found a bug or something that seems off? Please file it, don't just work
+  around it.** Open an issue at
+  [sooriyapsn/baby-story-teller/issues](https://github.com/sooriyapsn/baby-story-teller/issues) —
+  real repro steps (what you ran, what you expected, what happened, relevant
+  logs) help it get fixed faster, but even a rough "this didn't work" report
+  is worth filing. This is maintained best-effort by one person, not a team
+  with an SLA, but issues raised do get looked at and fixed — that's the
+  actual workflow here, not a formality.
+- **Provided as-is, under the MIT license, with no warranty of any kind** —
+  see [LICENSE](LICENSE). In plain terms: this software is still actively
+  being changed, nothing here is guaranteed to be complete, correct, or fit
+  for any particular purpose (including unsupervised use around a child),
+  and the authors/copyright holders accept no liability for how it behaves.
+  Self-hosting it, at any point in its development, is done at your own
+  discretion and your own risk.
+
 ## What this is for
 
 Story Teller is built for one purpose: giving a young child (think preschool /
