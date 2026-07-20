@@ -274,6 +274,67 @@ class TestParentSettings:
         assert metadata["story"] == "The tortoise and hare"
 
 
+class TestPinLockout:
+    def test_correct_pin_works_before_any_lockout(self, client: TestClient) -> None:
+        r = client.post("/api/parent/verify-pin", json={"pin": "1234"})
+        assert r.json() == {"ok": True}
+
+    def test_locks_out_after_max_wrong_attempts(self, client: TestClient) -> None:
+        for _ in range(5):
+            r = client.post("/api/parent/verify-pin", json={"pin": "0000"})
+            assert r.json() == {"ok": False}
+
+        # Even the correct PIN is now rejected — locked out, not just wrong.
+        r = client.post("/api/parent/verify-pin", json={"pin": "1234"})
+        assert r.json() == {"ok": False}
+
+    def test_a_single_correct_attempt_does_not_lock_out(self, client: TestClient) -> None:
+        for _ in range(4):
+            client.post("/api/parent/verify-pin", json={"pin": "0000"})
+        r = client.post("/api/parent/verify-pin", json={"pin": "1234"})
+        assert r.json() == {"ok": True}
+
+    def test_successful_pin_resets_the_attempt_count(self, client: TestClient) -> None:
+        for _ in range(4):
+            client.post("/api/parent/verify-pin", json={"pin": "0000"})
+        client.post("/api/parent/verify-pin", json={"pin": "1234"})  # resets the counter
+
+        for _ in range(4):
+            r = client.post("/api/parent/verify-pin", json={"pin": "0000"})
+            assert r.json() == {"ok": False}
+        # Still under the threshold since the counter reset — correct PIN works.
+        r = client.post("/api/parent/verify-pin", json={"pin": "1234"})
+        assert r.json() == {"ok": True}
+
+    def test_lockout_expires_after_the_window(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from local_voice_ai import parent_settings
+
+        for _ in range(5):
+            client.post("/api/parent/verify-pin", json={"pin": "0000"})
+        assert client.post("/api/parent/verify-pin", json={"pin": "1234"}).json() == {"ok": False}
+
+        # Fast-forward past the lockout window by backdating the recorded attempts.
+        client_id = next(iter(parent_settings._failed_pin_attempts))
+        parent_settings._failed_pin_attempts[client_id] = [
+            t - parent_settings._PIN_LOCKOUT_SECONDS - 1
+            for t in parent_settings._failed_pin_attempts[client_id]
+        ]
+
+        r = client.post("/api/parent/verify-pin", json={"pin": "1234"})
+        assert r.json() == {"ok": True}
+
+    def test_endpoints_requiring_pin_header_also_respect_lockout(
+        self, client: TestClient
+    ) -> None:
+        for _ in range(5):
+            client.post("/api/parent/verify-pin", json={"pin": "0000"})
+
+        r = client.get("/api/parent/settings", headers={"X-Parent-Pin": "1234"})
+        assert r.status_code == 401
+
+
 class TestKnownSpeakers:
     def test_list_requires_pin_header(self, client: TestClient) -> None:
         r = client.get("/api/parent/known-speakers")
