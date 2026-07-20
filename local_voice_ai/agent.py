@@ -29,6 +29,7 @@ from livekit.plugins.turn_detector.english import EnglishModel
 
 from . import known_speakers, speaker_id
 from .characters import CHARACTERS, Character, get_character, instructions_for
+from .parent_settings import load_settings
 from .story_examples import StoryExample, sample_story_examples
 
 logger = logging.getLogger("agent")
@@ -74,6 +75,10 @@ class Assistant(Agent):
 
 
 server = AgentServer()
+
+# Keeps fire-and-forget tasks (e.g. the time-limit cutoff below) alive —
+# asyncio only holds a weak ref otherwise.
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _warm_up_llm() -> None:
@@ -219,6 +224,43 @@ def _wire_voice_id(
     ctx.room.on("track_subscribed", _on_track_subscribed)
 
 
+async def _enforce_time_limit(
+    ctx: JobContext,
+    session: AgentSession,
+    character: Character,
+    language: str,
+    time_limit_minutes: int,
+) -> None:
+    """Server-side backstop for the parent time limit — the client's own
+    countdown timer is cooperative only; this ends the room regardless."""
+    try:
+        await asyncio.sleep(time_limit_minutes * 60)
+    except asyncio.CancelledError:
+        return
+
+    language_names = {"te": "Telugu", "mr": "Marathi"}
+    goodbye_language_hint = (
+        f" Say this goodbye itself in {language_names[language]}, not English."
+        if language in language_names
+        else ""
+    )
+    try:
+        handle = session.generate_reply(
+            instructions=(
+                "Playtime is over for now. Warmly say a short, gentle goodbye, "
+                f"staying fully in character as {character.name} — one or two "
+                "sentences, like tucking her in for later, not an abrupt "
+                f"announcement.{goodbye_language_hint}"
+            )
+        )
+        await asyncio.wait_for(handle.wait_for_playout(), timeout=20.0)
+    except Exception:
+        logger.exception("time-limit goodbye failed; ending the session anyway")
+
+    logger.info("session time limit (%s min) reached; deleting room", time_limit_minutes)
+    await ctx.delete_room()
+
+
 @server.rtc_session()
 async def my_agent(ctx: JobContext) -> None:
     ctx.log_context_fields = {"room": ctx.room.name}
@@ -339,6 +381,16 @@ async def my_agent(ctx: JobContext) -> None:
     assistant = Assistant(character, language, custom_story, story_examples, voice_id=voice_id_state)
     await session.start(agent=assistant, room=ctx.room)
     await ctx.connect()
+
+    # See _enforce_time_limit — hard server-side cutoff, not just the
+    # client's countdown.
+    time_limit_minutes = load_settings().time_limit_minutes
+    if time_limit_minutes and time_limit_minutes > 0:
+        time_limit_task = asyncio.create_task(
+            _enforce_time_limit(ctx, session, character, language, time_limit_minutes)
+        )
+        _background_tasks.add(time_limit_task)
+        time_limit_task.add_done_callback(_background_tasks.discard)
 
     # Restated here, not just in the system prompt: the model otherwise
     # tends to match the (English) language of this very instruction for

@@ -30,9 +30,9 @@ from .characters import CHARACTERS, get_character
 from .config import Config
 from .parent_settings import (
     STORY_TEXT_MAX_CHARS,
+    check_pin,
     load_settings,
     save_settings,
-    verify_pin,
 )
 
 logger = logging.getLogger("api")
@@ -46,6 +46,11 @@ _PREVIEW_CACHE_DIR = Path(os.getenv("HF_HOME", "/tmp")) / "character-previews"
 
 
 _SUPPORTED_LANGUAGES = ("en", "te", "mr")
+
+
+def _client_id(request: Request) -> str:
+    """Key for PIN-attempt lockout — best-effort, not spoof-proof."""
+    return request.client.host if request.client else "unknown"
 
 
 async def _synthesize_and_cache_preview(cfg: Config, character_id: str, language: str = "en") -> bytes:
@@ -249,11 +254,11 @@ def build_app(
         except Exception:
             body = {}
         pin = body.get("pin") if isinstance(body, dict) else None
-        return JSONResponse({"ok": bool(pin) and verify_pin(pin)})
+        return JSONResponse({"ok": bool(pin) and check_pin(_client_id(request), pin)})
 
     @app.get("/api/parent/settings")
     async def parent_get_settings(request: Request) -> JSONResponse:
-        if not verify_pin(request.headers.get("X-Parent-Pin") or ""):
+        if not check_pin(_client_id(request), request.headers.get("X-Parent-Pin") or ""):
             raise HTTPException(status_code=401, detail="invalid pin")
         return JSONResponse(vars(load_settings()))
 
@@ -263,7 +268,7 @@ def build_app(
             body = await request.json()
         except Exception:
             body = {}
-        if not isinstance(body, dict) or not verify_pin(body.get("pin") or ""):
+        if not isinstance(body, dict) or not check_pin(_client_id(request), body.get("pin") or ""):
             raise HTTPException(status_code=401, detail="invalid pin")
 
         settings = load_settings()
@@ -284,7 +289,7 @@ def build_app(
     async def parent_list_known_speakers(request: Request) -> JSONResponse:
         """Names + enrollment times only — never the raw voice embeddings,
         those never leave the agent process."""
-        if not verify_pin(request.headers.get("X-Parent-Pin") or ""):
+        if not check_pin(_client_id(request), request.headers.get("X-Parent-Pin") or ""):
             raise HTTPException(status_code=401, detail="invalid pin")
         speakers = known_speakers.load_speakers()
         return JSONResponse(
@@ -293,7 +298,7 @@ def build_app(
 
     @app.delete("/api/parent/known-speakers/{name}")
     async def parent_delete_known_speaker(name: str, request: Request) -> JSONResponse:
-        if not verify_pin(request.headers.get("X-Parent-Pin") or ""):
+        if not check_pin(_client_id(request), request.headers.get("X-Parent-Pin") or ""):
             raise HTTPException(status_code=401, detail="invalid pin")
         removed = known_speakers.forget(name)
         if not removed:
@@ -304,7 +309,7 @@ def build_app(
     async def parent_upload_pdf(request: Request) -> JSONResponse:
         form = await request.form()
         pin = form.get("pin")
-        if not isinstance(pin, str) or not verify_pin(pin):
+        if not isinstance(pin, str) or not check_pin(_client_id(request), pin):
             raise HTTPException(status_code=401, detail="invalid pin")
 
         upload = form.get("file")

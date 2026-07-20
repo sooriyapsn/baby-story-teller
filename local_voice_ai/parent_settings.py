@@ -11,12 +11,20 @@ import hmac
 import json
 import logging
 import os
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 logger = logging.getLogger("parent_settings")
 
 STORY_TEXT_MAX_CHARS = 6000
+
+# Brute-force lockout for the PIN: a 4-digit default has only 10k
+# combinations, so throttle by client IP rather than trust attempt volume
+# alone. In-memory, per-process — fine for a single-household supervisor.
+_MAX_PIN_ATTEMPTS = 5
+_PIN_LOCKOUT_SECONDS = 300
+_failed_pin_attempts: dict[str, list[float]] = {}
 
 
 def _settings_path() -> Path:
@@ -34,6 +42,21 @@ class ParentSettings:
 
 def verify_pin(pin: str) -> bool:
     return hmac.compare_digest(pin, os.getenv("PARENT_PIN") or "1234")
+
+
+def check_pin(client_id: str, pin: str) -> bool:
+    """verify_pin, plus a lockout after repeated failures from one client."""
+    now = time.time()
+    attempts = [t for t in _failed_pin_attempts.get(client_id, []) if now - t < _PIN_LOCKOUT_SECONDS]
+    if len(attempts) >= _MAX_PIN_ATTEMPTS:
+        _failed_pin_attempts[client_id] = attempts
+        return False
+    if verify_pin(pin):
+        _failed_pin_attempts.pop(client_id, None)
+        return True
+    attempts.append(now)
+    _failed_pin_attempts[client_id] = attempts
+    return False
 
 
 def load_settings() -> ParentSettings:
