@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Story Teller: a voice storyteller app for young children (STT → LLM → TTS) that runs as **one container supervised by a single Python parent process**. There is no microservices orchestration layer — `local_voice_ai/supervisor.py` spawns and health-checks everything as plain subprocesses on loopback. Three fixed characters, English/Telugu/Marathi TTS, and a PIN-gated parent dashboard (session time limit, a custom story/lesson pasted in or extracted from a PDF) sit on top of that base. The Python package/module is still named `local_voice_ai` — only the project's external name changed.
 
+For the system diagram, session-flow walkthrough, and the reasoning behind the major architecture calls, see [ARCH.md](ARCH.md) — this file covers dev commands and non-obvious gotchas, not design rationale.
+
 ## Commands
 
 ### Python (supervisor, agent, services)
@@ -95,6 +97,8 @@ Each service has one decision, driven by whether its `*_BASE_URL` is a loopback 
 
 Full reference lives in `.env` and the README's "Environment variables" section. Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`, matching the prefixes `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`) so add new env vars to that prefix list if they fall in one of these families.
 
-## CI (`.github/workflows/ci.yml`)
+## CI
 
-Three jobs gate merges: `test` (pytest on 3.11), `frontend` (`pnpm run build`). A `docker` + `docker-merge` job pair only runs on pushes to `main`/tags — it builds amd64 and arm64 natively (no QEMU, since the ML stack would take hours emulated) and stitches the digests into one multi-arch manifest pushed to `ghcr.io/sooriyapsn/story-teller`.
+`.github/workflows/ci.yml` — two jobs gate merges: `test` (pytest on 3.11), `frontend` (`pnpm run build`). A `docker` + `docker-merge` job pair only runs on pushes to `main`/tags — it builds amd64 and arm64 natively (no QEMU, since the ML stack would take hours emulated) and stitches the digests into one multi-arch manifest pushed to `ghcr.io/sooriyapsn/story-teller`.
+
+`.github/workflows/android.yml` — builds `phone-app`/`tab-app` debug APKs on any push touching either directory, then (on `main`) republishes both as assets on a single fixed-tag release (`debug-latest`), overwritten each time — see either app's README for the resulting download links.
