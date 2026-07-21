@@ -18,13 +18,13 @@ logger = logging.getLogger("gallery_audio_cache")
 _CHUNK_MS = 20
 
 
-def _cache_dir() -> Path:
+def cache_dir() -> Path:
     return Path(os.getenv("STORY_GALLERY_AUDIO_CACHE_DIR", "/models/story-gallery-audio-cache"))
 
 
 def _cache_path(voice: str, text: str) -> Path:
     key = hashlib.sha256(f"{voice}:{text}".encode()).hexdigest()
-    return _cache_dir() / f"{key}.wav"
+    return cache_dir() / f"{key}.wav"
 
 
 def load(voice: str, text: str) -> list[rtc.AudioFrame] | None:

@@ -344,42 +344,60 @@ def _warm_up_llm() -> None:
 def _warm_up_filler_audio() -> None:
     """Pre-render each character's FILLER_LINES to gallery_audio_cache so
     _say_filler never has to synthesize live. Skipped for non-loopback
-    TTS_BASE_URL, same reasoning as _warm_up_llm."""
+    TTS_BASE_URL, same reasoning as _warm_up_llm.
+
+    LiveKit spawns several prewarmed worker processes, each calling this —
+    a filesystem lock means only one actually hits the TTS server (they
+    share the same cache on the models volume) instead of piling concurrent
+    synthesis requests onto a server that may still be mid cold-start.
+    """
     tts_base_url = os.getenv("TTS_BASE_URL", "http://127.0.0.1:8880/v1")
     if not any(host in tts_base_url for host in ("127.0.0.1", "localhost")):
         return
 
-    tts_api_key = os.getenv("TTS_API_KEY", "no-key-needed")
-    tts_speed = float(os.getenv("TTS_SPEED", "0.9"))
+    lock_path = gallery_audio_cache.cache_dir() / ".filler-warmup.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return
 
-    deadline = time.monotonic() + 180.0
-    for character in CHARACTERS.values():
-        for text in FILLER_LINES.get(character.id, ()):
-            if gallery_audio_cache.load(character.tts_voice, text) is not None:
-                continue
-            while time.monotonic() < deadline:
-                try:
-                    resp = httpx.post(
-                        f"{tts_base_url}/audio/speech",
-                        json={
-                            "model": "tts-1",
-                            "input": text,
-                            "voice": character.tts_voice,
-                            "response_format": "wav",
-                            "speed": tts_speed,
-                        },
-                        headers={"Authorization": f"Bearer {tts_api_key}"},
-                        timeout=30.0,
-                    )
-                    resp.raise_for_status()
-                    gallery_audio_cache.save_wav_bytes(character.tts_voice, text, resp.content)
-                    break
-                except httpx.HTTPError:
-                    time.sleep(1.0)
-            else:
-                logger.warning("filler audio warm-up gave up waiting for the TTS server")
-                return
-    logger.info("filler audio warm-up complete")
+    try:
+        tts_api_key = os.getenv("TTS_API_KEY", "no-key-needed")
+        tts_speed = float(os.getenv("TTS_SPEED", "0.9"))
+
+        # One shared budget across all lines, not per-line — a line that
+        # times out just gets skipped (retried next boot) instead of
+        # abandoning every line after it.
+        deadline = time.monotonic() + 300.0
+        for character in CHARACTERS.values():
+            for text in FILLER_LINES.get(character.id, ()):
+                if gallery_audio_cache.load(character.tts_voice, text) is not None:
+                    continue
+                while time.monotonic() < deadline:
+                    try:
+                        resp = httpx.post(
+                            f"{tts_base_url}/audio/speech",
+                            json={
+                                "model": "tts-1",
+                                "input": text,
+                                "voice": character.tts_voice,
+                                "response_format": "wav",
+                                "speed": tts_speed,
+                            },
+                            headers={"Authorization": f"Bearer {tts_api_key}"},
+                            timeout=30.0,
+                        )
+                        resp.raise_for_status()
+                        gallery_audio_cache.save_wav_bytes(character.tts_voice, text, resp.content)
+                        break
+                    except httpx.HTTPError:
+                        time.sleep(1.0)
+                else:
+                    logger.warning("filler audio warm-up gave up on %r for %s", text, character.id)
+        logger.info("filler audio warm-up finished")
+    finally:
+        lock_path.unlink(missing_ok=True)
 
 
 def prewarm(proc: JobProcess) -> None:
