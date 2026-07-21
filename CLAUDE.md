@@ -68,7 +68,9 @@ All children talk HTTP over `127.0.0.1` only. Four ports are exposed: `8080` (we
 
 ### The "manage" pattern (`local_voice_ai/config.py`)
 
-Each service has one decision, driven by whether its `*_BASE_URL` is a loopback address: local → the supervisor spawns and owns the subprocess; remote → the subprocess is skipped and the URL is used directly (e.g. pointing `LLAMA_BASE_URL` at OpenAI). `MANAGE_LIVEKIT` / `MANAGE_LLAMA` / `MANAGE_STT` / `MANAGE_TTS` override the auto-detection explicitly. `Config.from_env()` is the single source of truth for defaults — read it before touching any env-var-driven behavior.
+- Each service's `*_BASE_URL` decides ownership: loopback → supervisor spawns/owns the subprocess; remote → subprocess skipped, URL used directly (e.g. `LLAMA_BASE_URL` → OpenAI).
+- `MANAGE_LIVEKIT` / `MANAGE_LLAMA` / `MANAGE_STT` / `MANAGE_TTS` override the auto-detection explicitly.
+- `Config.from_env()` is the single source of truth for defaults — read it before touching any env-var-driven behavior.
 
 ### Key files
 
@@ -95,7 +97,9 @@ Each service has one decision, driven by whether its `*_BASE_URL` is a loopback 
 
 ## Environment variables
 
-Full reference lives in `.env` and the README's "Environment variables" section. Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`, matching the prefixes `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`) so add new env vars to that prefix list if they fall in one of these families.
+- Full reference: `.env` and the README's "Environment variables" section.
+- Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`), matching prefixes: `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`.
+- New env var → add its prefix to that list if it falls in one of these families.
 
 ## CI
 
