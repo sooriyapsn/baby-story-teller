@@ -106,3 +106,12 @@ All children talk HTTP over `127.0.0.1` only. Four ports are exposed: `8080` (we
 `.github/workflows/ci.yml` — two jobs gate merges: `test` (pytest on 3.11), `frontend` (`pnpm run build`). A `docker` + `docker-merge` job pair only runs on pushes to `main`/tags — it builds amd64 and arm64 natively (no QEMU, since the ML stack would take hours emulated) and stitches the digests into one multi-arch manifest pushed to `ghcr.io/sooriyapsn/story-teller`.
 
 `.github/workflows/android.yml` — builds `phone-app`/`tab-app` debug APKs on any push touching either directory, then (on `main`) republishes both as assets on a single fixed-tag release (`debug-latest`), overwritten each time — see either app's README for the resulting download links.
+
+## Working conventions
+
+- Confirm with the user before `git push` — commits are fine, pushing to `main` is a shared-state action.
+- Before any commit touching `local_voice_ai/`/`tests/`: `uv run pytest tests/ -q` passes and `ruff check` is clean on the changed files.
+- Before any commit touching `frontend/`: `pnpm run build`, `pnpm run lint`, `pnpm run format:check` all pass — there's no frontend unit-test suite, these are its verification.
+- After rebuilding the Docker container on a backend change, don't call it done from container health alone — verify the startup warm-up actually finished (see the `rebuild-verify` skill).
+- Comments: one short line, only when the *why* isn't obvious from the code itself. No multi-line comment blocks.
+- Project skills live in `.claude/skills/` — `rebuild-verify`, `watch-ci`, `live-device-test`, `kid-scope-audit`. Reach for one instead of re-deriving its steps from scratch.
