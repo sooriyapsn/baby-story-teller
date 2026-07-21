@@ -33,7 +33,7 @@ from livekit.agents import (
 from livekit.plugins import openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
-from . import gallery_audio_cache, known_speakers, speaker_id, story_gallery_state
+from . import debug_log, gallery_audio_cache, known_speakers, speaker_id, story_gallery_state
 from .characters import CHARACTERS, Character, get_character, instructions_for
 from .parent_settings import load_settings
 from .story_examples import StoryExample, load_story_examples, sample_story_examples
@@ -718,6 +718,19 @@ async def my_agent(ctx: JobContext) -> None:
     assistant = Assistant(character, language, custom_story, story_examples, voice_id=voice_id_state)
     await session.start(agent=assistant, room=ctx.room)
     await ctx.connect()
+
+    debug_logger = debug_log.maybe_open(ctx.room.name)
+    if debug_logger is not None:
+
+        @session.on("conversation_item_added")
+        def _on_conversation_item_added(event) -> None:
+            item = event.item
+            if item.type != "message" or not item.text_content:
+                return
+            if item.role == "user":
+                debug_logger.log_user(item.text_content)
+            elif item.role == "assistant":
+                debug_logger.log_agent(item.text_content, item.metrics.get("e2e_latency"))
 
     # See _enforce_time_limit — hard server-side cutoff, not just the
     # client's countdown.

@@ -335,6 +335,7 @@ See `.env` for the full list. The most important ones:
 - `WEB_PORT` (default `8080`)
 - `ENABLE_HTTPS=1` — fronts the web/API and LiveKit signaling with Caddy + a local CA (see [HTTPS](#https)). `PARENT_PIN` (default `1234`) gates the parent settings panel.
 - `MANAGE_LIVEKIT`, `MANAGE_LLAMA`, `MANAGE_STT`, `MANAGE_TTS` — explicit overrides for the auto-detected "is the URL external?" logic.
+- `DEBUG_CONVERSATION_LOG=1` — per-turn transcript + latency log, debugging only, off by default — see [Per-turn conversation log](#per-turn-conversation-log). `DEBUG_LOG_DIR` (default `logs`) picks where the files go.
 
 ## Debugging
 
@@ -377,6 +378,42 @@ Real repro steps help a lot (what you ran, what you expected, what actually
 happened, and any relevant log output) — but even a rough "this didn't work
 and I'm not sure why" report is genuinely useful and worth filing rather
 than sitting on.
+
+### Per-turn conversation log
+
+`DEBUG_CONVERSATION_LOG=1` turns on a plain-text, per-session transcript:
+what she said, what the character said back, and how long each reply took
+to start (`e2e_latency` — time from the end of her speech to the agent
+starting its response). **Off by default, debugging only** — when the flag
+is off, nothing related to this touches the filesystem at all, not even to
+create the log folder.
+
+```bash
+DEBUG_CONVERSATION_LOG=1 docker compose up --build
+```
+
+Each call gets its own file under `DEBUG_LOG_DIR` (default `logs/`,
+relative to the working directory — `/app/logs` inside the container, so
+mount a volume there if you want it to survive a restart), named
+`<UTC timestamp>_<room name>.log`:
+
+```
+2026-07-20T23:41:05.812  USER            tell me a story
+2026-07-20T23:41:05.998  AGENT (  0.19s)  Hmph. Let me dig up one of my favorite stories from the gallery for you...
+2026-07-20T23:42:10.204  USER            tell me a story about a dragon
+2026-07-20T23:42:13.771  AGENT (  3.57s)  Ooh, a dragon story! Once upon a time...
+```
+
+The gap between the two example turns above is a real, useful signal: the
+first ask hit the [gallery-story shortcut](ARCH.md) (near-instant, no LLM
+call), the second needed the real LLM. This log deliberately doesn't
+distinguish the two in its format — the latency number tells you which
+path a given turn actually took.
+
+This captures full conversation transcripts (including whatever a child
+says), so treat any log file it produces as sensitive — don't commit it,
+don't leave `DEBUG_CONVERSATION_LOG=1` on in a normal run, and delete old
+logs once you're done debugging.
 
 ## Third-party model licenses
 

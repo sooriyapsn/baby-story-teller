@@ -98,7 +98,7 @@ All children talk HTTP over `127.0.0.1` only. Four ports are exposed: `8080` (we
 ## Environment variables
 
 - Full reference: `.env` and the README's "Environment variables" section.
-- Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`), matching prefixes: `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`.
+- Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`), matching prefixes: `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`, `DEBUG_`.
 - New env var → add its prefix to that list if it falls in one of these families.
 
 ## CI
