@@ -13,7 +13,8 @@ import random
 import re
 import threading
 import time
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
+from typing import TypeVar
 
 import httpx
 from dotenv import load_dotenv
@@ -40,6 +41,8 @@ from .story_examples import StoryExample, load_story_examples, sample_story_exam
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+
+T = TypeVar("T")
 
 # Every word must be on this allowlist to count as a bare story ask —
 # unrecognized words (topics, questions, "don't") fall through to the LLM.
@@ -151,9 +154,12 @@ class Assistant(Agent):
         self._voice_id = voice_id
         self._character = character
         self._language = language
+        self._custom_story = custom_story
         self._told_gallery_stories: set[tuple[str, str]] = set()
-        # Set by llm_node, consumed by tts_node on the next call.
-        self._pending_gallery_text: str | None = None
+        # Keyed by text, not a single scalar, so overlapping preemptive generations can't cross-contaminate.
+        self._pending_gallery_stories: dict[str, StoryExample] = {}
+        # Set by _wire_voice_id on a recognized returning child; makes the next turn use the real LLM.
+        self._pending_recognition_greeting = False
 
     @function_tool
     async def remember_name(self, name: str) -> str:
@@ -167,30 +173,31 @@ class Assistant(Agent):
             logger.info("enrolled voice for name=%s", name)
         return f"Got it — I'll remember {name}."
 
-    def _pick_gallery_story(self, chat_ctx: llm.ChatContext) -> StoryExample | None:
-        # Gallery intro lines are English-only.
-        if self._language != "en":
+    async def _pick_gallery_story(self, chat_ctx: llm.ChatContext) -> StoryExample | None:
+        # A custom story or a pending recognition greeting must reach the real LLM, never shortcut.
+        if self._language != "en" or self._custom_story:
+            return None
+        if self._pending_recognition_greeting:
+            self._pending_recognition_greeting = False
             return None
         text = _latest_user_text(chat_ctx)
         matched = text is not None and _is_generic_story_request(text)
         logger.info("gallery_story_check text=%r matched=%s", text, matched)
         if not matched:
             return None
+        examples = await asyncio.to_thread(load_story_examples)
         candidates = [
             s
-            for s in load_story_examples()
+            for s in examples
             if s.language == "en" and (s.language, s.title) not in self._told_gallery_stories
         ]
         if not candidates:
             return None
         # Least-told-overall first (persisted, see story_gallery_state.py); ties random.
-        counts = story_gallery_state.load_counts()
+        counts = await asyncio.to_thread(story_gallery_state.load_counts)
         least_told = min(counts.get(_gallery_key(s), 0) for s in candidates)
         least_told_candidates = [s for s in candidates if counts.get(_gallery_key(s), 0) == least_told]
-        story = random.choice(least_told_candidates)
-        self._told_gallery_stories.add((story.language, story.title))
-        story_gallery_state.record_told(_gallery_key(story))
-        return story
+        return random.choice(least_told_candidates)
 
     async def llm_node(
         self,
@@ -199,9 +206,8 @@ class Assistant(Agent):
         model_settings: ModelSettings,
     ) -> AsyncIterable[str]:
         """Bare story ask: skip the LLM, recite a gallery story. Anything else: normal LLM turn."""
-        story = self._pick_gallery_story(chat_ctx)
+        story = await self._pick_gallery_story(chat_ctx)
         if story is None:
-            self._pending_gallery_text = None
             async for chunk in self._llm_node_with_fillers(chat_ctx, tools, model_settings):
                 yield chunk
             return
@@ -213,22 +219,44 @@ class Assistant(Agent):
             )
         )
         text = f"{intro}\n\n{story.body}"
-        self._pending_gallery_text = text
+        # Not "told" yet — tts_node marks it once actually synthesized (see below).
+        self._pending_gallery_stories[text] = story
         yield text
 
     async def tts_node(
         self, text: AsyncIterable[str], model_settings: ModelSettings
     ) -> AsyncIterable[rtc.AudioFrame]:
         """Replay cached audio for gallery text (see llm_node) instead of
-        re-synthesizing it every time it's told. Anything else: normal TTS."""
-        gallery_text, self._pending_gallery_text = self._pending_gallery_text, None
-        if gallery_text is None:
-            async for frame in Agent.default.tts_node(self, text, model_settings):
+        re-synthesizing it every time it's told. Anything else: normal TTS.
+
+        Matches purely on the text this call actually receives, not on
+        shared instance state set by a possibly-unrelated llm_node call, so
+        overlapping preemptive generations can't cross-contaminate which
+        turn's audio gets played.
+        """
+        it = text.__aiter__()
+        try:
+            first_chunk = await it.__anext__()
+        except StopAsyncIteration:
+            return
+
+        story = self._pending_gallery_stories.pop(first_chunk, None)
+        if story is None:
+
+            async def _rechain() -> AsyncIterable[str]:
+                yield first_chunk
+                async for chunk in it:
+                    yield chunk
+
+            async for frame in Agent.default.tts_node(self, _rechain(), model_settings):
                 yield frame
             return
 
+        self._told_gallery_stories.add((story.language, story.title))
+        await asyncio.to_thread(story_gallery_state.record_told, _gallery_key(story))
+
         voice = self._character.tts_voice
-        cached = gallery_audio_cache.load(voice, gallery_text)
+        cached = await asyncio.to_thread(gallery_audio_cache.load, voice, first_chunk)
         if cached is not None:
             logger.info("gallery audio cache hit")
             for frame in cached:
@@ -238,32 +266,33 @@ class Assistant(Agent):
         logger.info("gallery audio cache miss; synthesizing and caching")
 
         async def _one_chunk() -> AsyncIterable[str]:
-            yield gallery_text
+            yield first_chunk
 
         frames: list[rtc.AudioFrame] = []
-        async for frame in Agent.default.tts_node(self, _one_chunk(), model_settings):
+        async for frame in self._race_first_item_with_fillers(
+            Agent.default.tts_node(self, _one_chunk(), model_settings)
+        ):
             frames.append(frame)
             yield frame
-        gallery_audio_cache.save(voice, gallery_text, frames)
+        await asyncio.to_thread(gallery_audio_cache.save, voice, first_chunk, frames)
 
-    async def _llm_node_with_fillers(
-        self,
-        chat_ctx: llm.ChatContext,
-        tools: list[llm.Tool],
-        model_settings: ModelSettings,
-    ) -> AsyncIterable[str]:
-        """Real LLM turn, but says a cached filler line (see FILLER_LINES) if
-        the first chunk hasn't arrived by 3s/5s, so she isn't hearing dead air."""
-        gen = Agent.default.llm_node(self, chat_ctx, tools, model_settings).__aiter__()
+    async def _race_first_item_with_fillers(self, agen: AsyncIterable[T]) -> AsyncIterable[T]:
+        """Yield everything from agen, but say a cached filler line (see
+        FILLER_LINES) if the first item hasn't arrived by 3s/5s, so she
+        isn't hearing dead air. Shared by the real-LLM path (racing the
+        first text chunk) and a gallery cache-miss (racing the first audio
+        frame from Kokoro) — both are "something slow is about to start
+        speaking" the same way."""
+        it = agen.__aiter__()
         start = time.monotonic()
         deadlines = [start + delay for delay in FILLER_DELAYS]
         stage = 0
-        task = asyncio.ensure_future(gen.__anext__())
+        task = asyncio.ensure_future(it.__anext__())
         try:
             while True:
                 timeout = max(0.0, deadlines[stage] - time.monotonic()) if stage < len(deadlines) else None
                 try:
-                    first_chunk = (
+                    first_item = (
                         await task if timeout is None else await asyncio.wait_for(asyncio.shield(task), timeout)
                     )
                     break
@@ -276,8 +305,19 @@ class Assistant(Agent):
             if not task.done():
                 task.cancel()
 
-        yield first_chunk
-        async for chunk in gen:
+        yield first_item
+        async for item in it:
+            yield item
+
+    async def _llm_node_with_fillers(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.Tool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[str]:
+        """Real LLM turn, with filler coverage — see _race_first_item_with_fillers."""
+        gen = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
+        async for chunk in self._race_first_item_with_fillers(gen):
             yield chunk
 
     def _say_filler(self, stage: int) -> None:
@@ -297,6 +337,35 @@ server = AgentServer()
 _background_tasks: set[asyncio.Task] = set()
 
 
+# Generous: covers a slow first-run model download, not just a normal warm-up.
+_STALE_LOCK_AFTER_SECONDS = 600.0
+
+
+def _run_once_across_processes(lock_name: str, fn: Callable[[], None]) -> None:
+    """Run fn() at most once across LiveKit's several prewarmed worker
+    processes (they share the models volume, so one succeeding is enough).
+    Self-heals a lock left behind by a process killed mid-run — otherwise a
+    single hard kill would permanently disable this warm-up on that volume.
+    """
+    lock_path = gallery_audio_cache.cache_dir() / lock_name
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if time.time() - lock_path.stat().st_mtime > _STALE_LOCK_AFTER_SECONDS:
+            lock_path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+
+    try:
+        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return
+
+    try:
+        fn()
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
 def _warm_up_llm() -> None:
     """Prime llama-server's prompt cache with each character's system prompt.
 
@@ -312,57 +381,48 @@ def _warm_up_llm() -> None:
     if not any(host in llama_base_url for host in ("127.0.0.1", "localhost")):
         return
 
-    llama_model = os.getenv("LLAMA_MODEL", "gemma-4-e2b")
-    llama_api_key = os.getenv("LLAMA_API_KEY", "no-key-needed")
+    def _do() -> None:
+        llama_model = os.getenv("LLAMA_MODEL", "gemma-4-e2b")
+        llama_api_key = os.getenv("LLAMA_API_KEY", "no-key-needed")
 
-    deadline = time.monotonic() + 180.0
-    for character in CHARACTERS.values():
-        while time.monotonic() < deadline:
-            try:
-                httpx.post(
-                    f"{llama_base_url}/chat/completions",
-                    json={
-                        "model": llama_model,
-                        "messages": [
-                            {"role": "system", "content": character.instructions},
-                            {"role": "user", "content": "Hi"},
-                        ],
-                        "max_tokens": 1,
-                    },
-                    headers={"Authorization": f"Bearer {llama_api_key}"},
-                    timeout=30.0,
-                ).raise_for_status()
-                logger.info("llm warm-up complete: %s", character.id)
-                break
-            except httpx.HTTPError:
-                time.sleep(1.0)
-        else:
-            logger.warning("llm warm-up gave up waiting for the LLM server")
-            return
+        deadline = time.monotonic() + 180.0
+        for character in CHARACTERS.values():
+            while time.monotonic() < deadline:
+                try:
+                    httpx.post(
+                        f"{llama_base_url}/chat/completions",
+                        json={
+                            "model": llama_model,
+                            "messages": [
+                                {"role": "system", "content": character.instructions},
+                                {"role": "user", "content": "Hi"},
+                            ],
+                            "max_tokens": 1,
+                        },
+                        headers={"Authorization": f"Bearer {llama_api_key}"},
+                        timeout=30.0,
+                    ).raise_for_status()
+                    logger.info("llm warm-up complete: %s", character.id)
+                    break
+                except httpx.HTTPError:
+                    time.sleep(1.0)
+            else:
+                logger.warning("llm warm-up gave up waiting for the LLM server")
+                return
+
+    _run_once_across_processes(".llm-warmup.lock", _do)
 
 
 def _warm_up_filler_audio() -> None:
     """Pre-render each character's FILLER_LINES to gallery_audio_cache so
     _say_filler never has to synthesize live. Skipped for non-loopback
     TTS_BASE_URL, same reasoning as _warm_up_llm.
-
-    LiveKit spawns several prewarmed worker processes, each calling this —
-    a filesystem lock means only one actually hits the TTS server (they
-    share the same cache on the models volume) instead of piling concurrent
-    synthesis requests onto a server that may still be mid cold-start.
     """
     tts_base_url = os.getenv("TTS_BASE_URL", "http://127.0.0.1:8880/v1")
     if not any(host in tts_base_url for host in ("127.0.0.1", "localhost")):
         return
 
-    lock_path = gallery_audio_cache.cache_dir() / ".filler-warmup.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-    except FileExistsError:
-        return
-
-    try:
+    def _do() -> None:
         tts_api_key = os.getenv("TTS_API_KEY", "no-key-needed")
         tts_speed = float(os.getenv("TTS_SPEED", "0.9"))
 
@@ -396,8 +456,8 @@ def _warm_up_filler_audio() -> None:
                 else:
                     logger.warning("filler audio warm-up gave up on %r for %s", text, character.id)
         logger.info("filler audio warm-up finished")
-    finally:
-        lock_path.unlink(missing_ok=True)
+
+    _run_once_across_processes(".filler-warmup.lock", _do)
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -483,6 +543,7 @@ def _wire_voice_id(
                     ),
                 )
                 assistant.update_chat_ctx(new_ctx)
+                assistant._pending_recognition_greeting = True
         finally:
             feed_task.cancel()
 

@@ -1,16 +1,14 @@
 """Per-story told-counts for agent.py's gallery-story shortcut, persisted
 the same way known_speakers.py/parent_settings.py are (small JSON file, no
-database needed).
+database needed) — via json_store.py's shared load/save/update idiom.
 """
 
 from __future__ import annotations
 
-import json
-import logging
 import os
 from pathlib import Path
 
-logger = logging.getLogger("story_gallery_state")
+from . import json_store
 
 
 def _store_path() -> Path:
@@ -19,26 +17,26 @@ def _store_path() -> Path:
     return Path(os.getenv("STORY_GALLERY_STATE_PATH", "/models/story-gallery-state.json"))
 
 
+def _validate(raw: object) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): int(v) for k, v in raw.items() if isinstance(v, (int, float))}
+
+
 def load_counts() -> dict[str, int]:
-    path = _store_path()
-    if path.is_file():
-        try:
-            raw = json.loads(path.read_text())
-            if isinstance(raw, dict):
-                return {str(k): int(v) for k, v in raw.items() if isinstance(v, (int, float))}
-        except (json.JSONDecodeError, OSError, TypeError, ValueError):
-            logger.warning("could not read story gallery state, starting empty")
-    return {}
+    return json_store.load(_store_path(), {}, validate=_validate)
 
 
 def save_counts(counts: dict[str, int]) -> None:
-    path = _store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(counts))
+    json_store.save(_store_path(), counts)
 
 
 def record_told(key: str) -> None:
-    """Increment and persist a story's told-count immediately."""
-    counts = load_counts()
-    counts[key] = counts.get(key, 0) + 1
-    save_counts(counts)
+    """Increment and persist a story's told-count immediately, locked
+    against concurrent writers (e.g. two devices telling stories at once)."""
+
+    def _increment(counts: dict[str, int]) -> dict[str, int]:
+        counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    json_store.update(_store_path(), {}, _increment, validate=_validate)

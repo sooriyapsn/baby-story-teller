@@ -28,9 +28,14 @@ def _chat_ctx(user_text: str) -> llm.ChatContext:
     return ctx
 
 
-def _assistant(monkeypatch: pytest.MonkeyPatch, stories: list[StoryExample], language: str = "en") -> agent.Assistant:
+def _assistant(
+    monkeypatch: pytest.MonkeyPatch,
+    stories: list[StoryExample],
+    language: str = "en",
+    custom_story: str = "",
+) -> agent.Assistant:
     monkeypatch.setattr(agent, "load_story_examples", lambda: stories)
-    return agent.Assistant(CHARACTERS["red"], language=language)
+    return agent.Assistant(CHARACTERS["red"], language=language, custom_story=custom_story)
 
 
 class TestIsGenericStoryRequest:
@@ -80,41 +85,56 @@ class TestIsGenericStoryRequest:
 
 
 class TestPickGalleryStory:
-    def test_generic_ask_picks_a_story(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_generic_ask_picks_a_story(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assistant = _assistant(monkeypatch, [FOX, BEAR])
-        story = assistant._pick_gallery_story(_chat_ctx("tell me a story"))
+        story = await assistant._pick_gallery_story(_chat_ctx("tell me a story"))
         assert story in (FOX, BEAR)
 
-    def test_specific_ask_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_specific_ask_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assistant = _assistant(monkeypatch, [FOX, BEAR])
-        assert assistant._pick_gallery_story(_chat_ctx("tell me a story about dragons")) is None
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story about dragons")) is None
 
-    def test_non_english_session_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_non_english_session_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assistant = _assistant(monkeypatch, [FOX, BEAR], language="te")
-        assert assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
 
-    def test_no_stories_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_no_stories_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assistant = _assistant(monkeypatch, [])
-        assert assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
 
-    def test_does_not_repeat_within_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_custom_story_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A parent-set custom story must always win over the gallery
+        shortcut, so a bare ask never silently substitutes a stock tale."""
+        assistant = _assistant(monkeypatch, [FOX], custom_story="A gentle lesson about sharing toys.")
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
+
+    async def test_pending_recognition_greeting_returns_none_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A just-recognized returning child needs the real LLM to say her
+        greeting — the shortcut must defer exactly once, then behave
+        normally again."""
         assistant = _assistant(monkeypatch, [FOX])
-        first = assistant._pick_gallery_story(_chat_ctx("tell me a story"))
-        assert first is FOX
-        second = assistant._pick_gallery_story(_chat_ctx("tell me another story"))
-        assert second is None
+        assistant._pending_recognition_greeting = True
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story")) is None
+        assert assistant._pending_recognition_greeting is False
+        assert await assistant._pick_gallery_story(_chat_ctx("tell me a story")) is FOX
 
-    def test_prefers_least_told_globally(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_prefers_least_told_globally(self, monkeypatch: pytest.MonkeyPatch) -> None:
         story_gallery_state.record_told(agent._gallery_key(FOX))
         story_gallery_state.record_told(agent._gallery_key(FOX))
         assistant = _assistant(monkeypatch, [FOX, BEAR])
-        story = assistant._pick_gallery_story(_chat_ctx("tell me a story"))
+        story = await assistant._pick_gallery_story(_chat_ctx("tell me a story"))
         assert story is BEAR
 
-    def test_records_told_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_picking_alone_does_not_record_told(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Picking must be read-only — only tts_node actually synthesizing
+        the matched text should persist a told-count (see TestTtsNodeCache),
+        otherwise a discarded preemptive generation corrupts the state."""
         assistant = _assistant(monkeypatch, [FOX])
-        assistant._pick_gallery_story(_chat_ctx("tell me a story"))
-        assert story_gallery_state.load_counts()[agent._gallery_key(FOX)] == 1
+        await assistant._pick_gallery_story(_chat_ctx("tell me a story"))
+        assert story_gallery_state.load_counts() == {}
+        assert assistant._told_gallery_stories == set()
 
 
 class TestLlmNodeShortcut:
@@ -137,7 +157,7 @@ class TestLlmNodeShortcut:
         ]
         assert chunks == ["fell through to the llm"]
 
-    async def test_specific_ask_leaves_no_pending_gallery_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_specific_ask_leaves_no_pending_gallery_story(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assistant = _assistant(monkeypatch, [FOX])
 
         async def _fake_default_llm_node(agent_self, chat_ctx, tools, model_settings):
@@ -146,7 +166,31 @@ class TestLlmNodeShortcut:
         monkeypatch.setattr(agent.Agent.default, "llm_node", _fake_default_llm_node)
         async for _ in assistant.llm_node(_chat_ctx("tell me a story about dragons"), [], None):
             pass
-        assert assistant._pending_gallery_text is None
+        assert assistant._pending_gallery_stories == {}
+
+    async def test_custom_story_bypasses_shortcut(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assistant = _assistant(monkeypatch, [FOX], custom_story="A gentle lesson about sharing toys.")
+
+        async def _fake_default_llm_node(agent_self, chat_ctx, tools, model_settings):
+            yield "the real llm, weaving in the custom story"
+
+        monkeypatch.setattr(agent.Agent.default, "llm_node", _fake_default_llm_node)
+        chunks = [c async for c in assistant.llm_node(_chat_ctx("tell me a story"), [], None)]
+        assert chunks == ["the real llm, weaving in the custom story"]
+
+    async def test_pending_recognition_greeting_bypasses_shortcut_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assistant = _assistant(monkeypatch, [FOX])
+        assistant._pending_recognition_greeting = True
+
+        async def _fake_default_llm_node(agent_self, chat_ctx, tools, model_settings):
+            yield "greeting handled by the llm"
+
+        monkeypatch.setattr(agent.Agent.default, "llm_node", _fake_default_llm_node)
+        chunks = [c async for c in assistant.llm_node(_chat_ctx("tell me a story"), [], None)]
+        assert chunks == ["greeting handled by the llm"]
+        assert assistant._pending_recognition_greeting is False
 
 
 def _frame(data: bytes = b"\x00\x00" * 480, sample_rate: int = 24000, num_channels: int = 1) -> rtc.AudioFrame:
@@ -168,6 +212,8 @@ class TestTtsNodeCache:
         async def _fake_default_tts_node(agent_self, text, model_settings):
             nonlocal called
             called = True
+            async for _ in text:
+                pass
             yield _frame()
 
         monkeypatch.setattr(agent.Agent.default, "tts_node", _fake_default_tts_node)
@@ -184,7 +230,7 @@ class TestTtsNodeCache:
     ) -> None:
         monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
         assistant = _assistant(monkeypatch, [FOX])
-        assistant._pending_gallery_text = "Once upon a fox..."
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
 
         async def _fake_default_tts_node(agent_self, text, model_settings):
             yield _frame()
@@ -198,6 +244,10 @@ class TestTtsNodeCache:
         frames = [f async for f in assistant.tts_node(_text(), None)]
         assert len(frames) == 2
         assert gallery_audio_cache.load(assistant._character.tts_voice, "Once upon a fox...") is not None
+        # Told-state only persists once tts_node actually synthesizes the
+        # matched text — see test_picking_alone_does_not_record_told above.
+        assert story_gallery_state.load_counts()[agent._gallery_key(FOX)] == 1
+        assert (FOX.language, FOX.title) in assistant._told_gallery_stories
 
     async def test_gallery_turn_cache_hit_skips_default_tts_node(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
@@ -205,7 +255,7 @@ class TestTtsNodeCache:
         monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
         assistant = _assistant(monkeypatch, [FOX])
         gallery_audio_cache.save(assistant._character.tts_voice, "Once upon a fox...", [_frame(), _frame()])
-        assistant._pending_gallery_text = "Once upon a fox..."
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
 
         called = False
 
@@ -223,12 +273,12 @@ class TestTtsNodeCache:
         assert called is False
         assert len(frames) == 2
 
-    async def test_tts_node_consumes_pending_gallery_text(
+    async def test_tts_node_consumes_pending_gallery_story(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
     ) -> None:
         monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
         assistant = _assistant(monkeypatch, [FOX])
-        assistant._pending_gallery_text = "Once upon a fox..."
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
 
         async def _fake_default_tts_node(agent_self, text, model_settings):
             yield _frame()
@@ -239,7 +289,37 @@ class TestTtsNodeCache:
             yield "Once upon a fox..."
 
         [f async for f in assistant.tts_node(_text(), None)]
-        assert assistant._pending_gallery_text is None
+        assert assistant._pending_gallery_stories == {}
+
+    async def test_only_matching_text_is_treated_as_gallery(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """This is the actual mechanism that fixes the preemptive-generation
+        cross-talk bug: a pending entry for a DIFFERENT text than what this
+        call receives must not be consumed, and must stay available for its
+        own real turn."""
+        monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
+        assistant = _assistant(monkeypatch, [FOX])
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
+
+        called = False
+
+        async def _fake_default_tts_node(agent_self, text, model_settings):
+            nonlocal called
+            called = True
+            async for _ in text:
+                pass
+            yield _frame()
+
+        monkeypatch.setattr(agent.Agent.default, "tts_node", _fake_default_tts_node)
+
+        async def _text() -> None:
+            yield "a completely different reply from the real LLM"
+
+        frames = [f async for f in assistant.tts_node(_text(), None)]
+        assert called is True
+        assert len(frames) == 1
+        assert assistant._pending_gallery_stories == {"Once upon a fox...": FOX}
 
 
 class _FakeSession:
@@ -336,4 +416,55 @@ class TestLlmNodeFillers:
         assistant, fake_session = self._assistant_with_session(monkeypatch, [FOX])
         monkeypatch.setattr(agent, "FILLER_DELAYS", (0.0, 0.0))
         [c async for c in assistant.llm_node(_chat_ctx("tell me a story"), [], None)]
+        assert fake_session.said == []
+
+
+class TestGalleryCacheMissFillers:
+    """A gallery cache-miss (first-ever telling of a story) synthesizes the
+    whole story via Kokoro, which can take as long as a real LLM reply —
+    it needs the same filler coverage, not just the real-LLM path."""
+
+    async def test_slow_synthesis_on_cache_miss_triggers_filler(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
+        assistant = _assistant(monkeypatch, [FOX])
+        fake_session = _FakeSession()
+        monkeypatch.setattr(type(assistant), "session", property(lambda self: fake_session))
+        monkeypatch.setattr(agent, "FILLER_DELAYS", (0.02, 100.0))
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
+
+        async def _slow_default_tts_node(agent_self, text, model_settings):
+            await asyncio.sleep(0.05)
+            yield _frame()
+
+        monkeypatch.setattr(agent.Agent.default, "tts_node", _slow_default_tts_node)
+
+        async def _text() -> None:
+            yield "Once upon a fox..."
+
+        frames = [f async for f in assistant.tts_node(_text(), None)]
+        assert len(frames) == 1
+        assert len(fake_session.said) == 1
+        assert fake_session.said[0]["text"] == agent.FILLER_LINES["red"][0]
+
+    async def test_fast_synthesis_on_cache_miss_triggers_no_filler(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        monkeypatch.setenv("STORY_GALLERY_AUDIO_CACHE_DIR", str(tmp_path / "gallery-audio"))
+        assistant = _assistant(monkeypatch, [FOX])
+        fake_session = _FakeSession()
+        monkeypatch.setattr(type(assistant), "session", property(lambda self: fake_session))
+        monkeypatch.setattr(agent, "FILLER_DELAYS", (5.0, 10.0))
+        assistant._pending_gallery_stories["Once upon a fox..."] = FOX
+
+        async def _fast_default_tts_node(agent_self, text, model_settings):
+            yield _frame()
+
+        monkeypatch.setattr(agent.Agent.default, "tts_node", _fast_default_tts_node)
+
+        async def _text() -> None:
+            yield "Once upon a fox..."
+
+        [f async for f in assistant.tts_node(_text(), None)]
         assert fake_session.said == []
