@@ -82,6 +82,8 @@ Everything runs as managed children of one Python supervisor (`python -m local_v
 
 Children speak HTTP only over `127.0.0.1`. The image exposes four ports: `8080` (web), `7880`, `7881`, `7882/udp` (LiveKit WebRTC, only if running locally).
 
+For the full system diagram, how a session flows end to end, and the reasoning behind the major architecture calls, see [ARCH.md](ARCH.md).
+
 ## System requirements
 
 Everything below is CPU-only by default; a GPU is optional (see [GPU (NVIDIA)](#gpu-nvidia)). Numbers marked "measured" come from `docker stats` on a real running instance with every child warm (STT + LLM + Kokoro TTS + Telugu/Marathi TTS all loaded at once) — that's the ceiling, not the typical moment-to-moment load. Numbers marked "estimated" are reasoned from the architecture (four concurrent inference services), not lab-tested against a range of hardware, since this project only runs on one dev machine.

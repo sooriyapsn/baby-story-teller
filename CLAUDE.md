@@ -93,7 +93,7 @@ Each service has one decision, driven by whether its `*_BASE_URL` is a loopback 
 
 ## Environment variables
 
-Full reference lives in `.env` and the README's "Environment variables" section. Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`, matching the prefixes `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`) so add new env vars to that prefix list if they fall in one of these families.
+Full reference lives in `.env` and the README's "Environment variables" section. Tests wipe all project-owned env vars before each run (`tests/conftest.py::_clean_env`, matching the prefixes `LIVEKIT_`, `LLAMA_`, `STT_`, `TTS_`, `MANAGE_`, `WEB_`, `DEVICE`, `NEMOTRON_`, `WHISPER_`, `WAKE_WORD`, `FRONTEND_DIR`, `KOKORO_`, `LOG_LEVEL`, `VOICE_ID_`, `KNOWN_SPEAKERS_`, `STORY_GALLERY_`) so add new env vars to that prefix list if they fall in one of these families.
 
 ## CI (`.github/workflows/ci.yml`)
 

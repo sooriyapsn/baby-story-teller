@@ -9,8 +9,11 @@ import asyncio
 import json
 import logging
 import os
+import random
+import re
 import threading
 import time
+from collections.abc import AsyncIterable
 
 import httpx
 from dotenv import load_dotenv
@@ -21,20 +24,73 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
+    ModelSettings,
     cli,
     function_tool,
+    llm,
 )
 from livekit.plugins import openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
-from . import known_speakers, speaker_id
+from . import known_speakers, speaker_id, story_gallery_state
 from .characters import CHARACTERS, Character, get_character, instructions_for
 from .parent_settings import load_settings
-from .story_examples import StoryExample, sample_story_examples
+from .story_examples import StoryExample, load_story_examples, sample_story_examples
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+
+# Bare "tell me a story", no topic — any topic word bails to the LLM.
+_TOPIC_HINT_RE = re.compile(
+    r"\b(about|regarding|involving|with|where|who|starring|featuring|like)\b", re.IGNORECASE
+)
+_GENERIC_STORY_RE = re.compile(
+    r"^(?:hey|hi|okay|ok|so|um+|well)?[\s,]*"
+    r"(?:can you |could you |will you |please )*"
+    r"(?:tell|read|say|give|share)?\s*"
+    r"(?:me )?"
+    r"(?:a |another |one more |the |a new )*"
+    r"story"
+    r"\s*(?:please|now|time)?[.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_generic_story_request(text: str) -> bool:
+    text = text.strip()
+    if not text or _TOPIC_HINT_RE.search(text):
+        return False
+    return bool(_GENERIC_STORY_RE.match(text))
+
+
+def _latest_user_text(chat_ctx: llm.ChatContext) -> str | None:
+    for item in reversed(chat_ctx.items):
+        if item.type != "message":
+            continue
+        return item.text_content if item.role == "user" else None
+    return None
+
+
+def _gallery_key(story: StoryExample) -> str:
+    return f"{story.language}:{story.title}"
+
+
+# Stated, never asked as a question — she shouldn't have to choose.
+GALLERY_INTROS: dict[str, list[str]] = {
+    "red": [
+        "Hmph. Let me dig up one of my favorite stories from the gallery for you.",
+        "Fine, fine — I've got a good one saved up in my gallery. Here we go.",
+    ],
+    "blue": [
+        "Ooh, ooh! Let me grab one of my favorite stories from the gallery!",
+        "I know just the one — pulling it straight from my story gallery!",
+    ],
+    "pink": [
+        "Let me pick one of my favorite stories from the gallery for you.",
+        "Oh, I have just the story saved in my gallery for you, sweet friend.",
+    ],
+}
 
 
 class VoiceIdState:
@@ -60,6 +116,9 @@ class Assistant(Agent):
             instructions=instructions_for(character, language, custom_story, story_examples)
         )
         self._voice_id = voice_id
+        self._character = character
+        self._language = language
+        self._told_gallery_stories: set[tuple[str, str]] = set()
 
     @function_tool
     async def remember_name(self, name: str) -> str:
@@ -72,6 +131,50 @@ class Assistant(Agent):
             known_speakers.enroll(name, self._voice_id.latest_embedding)
             logger.info("enrolled voice for name=%s", name)
         return f"Got it — I'll remember {name}."
+
+    def _pick_gallery_story(self, chat_ctx: llm.ChatContext) -> StoryExample | None:
+        # Gallery intro lines are English-only.
+        if self._language != "en":
+            return None
+        text = _latest_user_text(chat_ctx)
+        if text is None or not _is_generic_story_request(text):
+            return None
+        candidates = [
+            s
+            for s in load_story_examples()
+            if s.language == "en" and (s.language, s.title) not in self._told_gallery_stories
+        ]
+        if not candidates:
+            return None
+        # Least-told-overall first (persisted, see story_gallery_state.py); ties random.
+        counts = story_gallery_state.load_counts()
+        least_told = min(counts.get(_gallery_key(s), 0) for s in candidates)
+        least_told_candidates = [s for s in candidates if counts.get(_gallery_key(s), 0) == least_told]
+        story = random.choice(least_told_candidates)
+        self._told_gallery_stories.add((story.language, story.title))
+        story_gallery_state.record_told(_gallery_key(story))
+        return story
+
+    async def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.Tool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[str]:
+        """Bare story ask: skip the LLM, recite a gallery story. Anything else: normal LLM turn."""
+        story = self._pick_gallery_story(chat_ctx)
+        if story is None:
+            async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
+                yield chunk
+            return
+
+        intro = random.choice(
+            GALLERY_INTROS.get(
+                self._character.id,
+                ["Let me pick one of my favorite stories from the gallery for you."],
+            )
+        )
+        yield f"{intro}\n\n{story.body}"
 
 
 server = AgentServer()
