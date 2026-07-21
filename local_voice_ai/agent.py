@@ -32,7 +32,7 @@ from livekit.agents import (
 from livekit.plugins import openai, silero
 from livekit.plugins.turn_detector.english import EnglishModel
 
-from . import known_speakers, speaker_id, story_gallery_state
+from . import gallery_audio_cache, known_speakers, speaker_id, story_gallery_state
 from .characters import CHARACTERS, Character, get_character, instructions_for
 from .parent_settings import load_settings
 from .story_examples import StoryExample, load_story_examples, sample_story_examples
@@ -41,27 +41,33 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Bare "tell me a story", no topic — any topic word bails to the LLM.
+# Every word must be on this allowlist to count as a bare story ask —
+# unrecognized words (topics, questions, "don't") fall through to the LLM.
 _TOPIC_HINT_RE = re.compile(
     r"\b(about|regarding|involving|with|where|who|starring|featuring|like)\b", re.IGNORECASE
 )
-_GENERIC_STORY_RE = re.compile(
-    r"^(?:hey|hi|okay|ok|so|um+|well)?[\s,]*"
-    r"(?:can you |could you |will you |please )*"
-    r"(?:tell|read|say|give|share)?\s*"
-    r"(?:me )?"
-    r"(?:a |another |one more |the |a new )*"
-    r"story"
-    r"\s*(?:please|now|time)?[.!?]*$",
-    re.IGNORECASE,
-)
+_STORY_FILLER_WORDS = {
+    "hey", "hi", "hello", "okay", "ok", "so", "well", "um", "umm", "uh",
+    "please", "can", "you", "could", "will", "would", "do", "me", "i",
+    "want", "wanna", "to", "hear", "have", "got", "a", "an", "the",
+    "another", "one", "more", "new", "for", "let's", "lets", "us", "now",
+    "time", "storytime", "story",
+    "tell", "read", "say", "give", "share", "start",
+}  # fmt: skip
+_CHARACTER_NAME_WORDS = {
+    word for c in CHARACTERS.values() for word in (*c.name.lower().split(), c.id)
+}
 
 
 def _is_generic_story_request(text: str) -> bool:
     text = text.strip()
     if not text or _TOPIC_HINT_RE.search(text):
         return False
-    return bool(_GENERIC_STORY_RE.match(text))
+    words = re.findall(r"[a-z']+", text.lower())
+    if "story" not in words and "storytime" not in words:
+        return False
+    allowed = _STORY_FILLER_WORDS | _CHARACTER_NAME_WORDS
+    return all(w in allowed for w in words)
 
 
 def _latest_user_text(chat_ctx: llm.ChatContext) -> str | None:
@@ -74,6 +80,11 @@ def _latest_user_text(chat_ctx: llm.ChatContext) -> str | None:
 
 def _gallery_key(story: StoryExample) -> str:
     return f"{story.language}:{story.title}"
+
+
+async def _frames_to_async_iter(frames: list[rtc.AudioFrame]) -> AsyncIterable[rtc.AudioFrame]:
+    for frame in frames:
+        yield frame
 
 
 # Stated, never asked as a question — she shouldn't have to choose.
@@ -90,6 +101,28 @@ GALLERY_INTROS: dict[str, list[str]] = {
         "Let me pick one of my favorite stories from the gallery for you.",
         "Oh, I have just the story saved in my gallery for you, sweet friend.",
     ],
+}
+
+# (short filler, longer filler) played if the real LLM takes >3s / >5s to
+# start replying — pre-rendered to cached audio at startup (_warm_up_filler_audio)
+# so playing one is instant, not another TTS call.
+FILLER_DELAYS = (3.0, 5.0)
+FILLER_LINES: dict[str, tuple[str, str]] = {
+    "red": (
+        "Hmph... let me think.",
+        "Hmph, that is a tricky one... let me think, let me think... fine, I will "
+        "have an even better story for you in just a moment.",
+    ),
+    "blue": (
+        "Ooh, let me think!",
+        "Whoa, that's a tricky one! Let me think, let me think... hang on, I'm "
+        "cooking up something even better for you!",
+    ),
+    "pink": (
+        "Hmm, let me think, sweet friend.",
+        "Oh, that's a wonderful but tricky one... let me think, let me think... "
+        "I promise, an even better story is coming.",
+    ),
 }
 
 
@@ -119,6 +152,8 @@ class Assistant(Agent):
         self._character = character
         self._language = language
         self._told_gallery_stories: set[tuple[str, str]] = set()
+        # Set by llm_node, consumed by tts_node on the next call.
+        self._pending_gallery_text: str | None = None
 
     @function_tool
     async def remember_name(self, name: str) -> str:
@@ -137,7 +172,9 @@ class Assistant(Agent):
         if self._language != "en":
             return None
         text = _latest_user_text(chat_ctx)
-        if text is None or not _is_generic_story_request(text):
+        matched = text is not None and _is_generic_story_request(text)
+        logger.info("gallery_story_check text=%r matched=%s", text, matched)
+        if not matched:
             return None
         candidates = [
             s
@@ -164,7 +201,8 @@ class Assistant(Agent):
         """Bare story ask: skip the LLM, recite a gallery story. Anything else: normal LLM turn."""
         story = self._pick_gallery_story(chat_ctx)
         if story is None:
-            async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
+            self._pending_gallery_text = None
+            async for chunk in self._llm_node_with_fillers(chat_ctx, tools, model_settings):
                 yield chunk
             return
 
@@ -174,7 +212,82 @@ class Assistant(Agent):
                 ["Let me pick one of my favorite stories from the gallery for you."],
             )
         )
-        yield f"{intro}\n\n{story.body}"
+        text = f"{intro}\n\n{story.body}"
+        self._pending_gallery_text = text
+        yield text
+
+    async def tts_node(
+        self, text: AsyncIterable[str], model_settings: ModelSettings
+    ) -> AsyncIterable[rtc.AudioFrame]:
+        """Replay cached audio for gallery text (see llm_node) instead of
+        re-synthesizing it every time it's told. Anything else: normal TTS."""
+        gallery_text, self._pending_gallery_text = self._pending_gallery_text, None
+        if gallery_text is None:
+            async for frame in Agent.default.tts_node(self, text, model_settings):
+                yield frame
+            return
+
+        voice = self._character.tts_voice
+        cached = gallery_audio_cache.load(voice, gallery_text)
+        if cached is not None:
+            logger.info("gallery audio cache hit")
+            for frame in cached:
+                yield frame
+            return
+
+        logger.info("gallery audio cache miss; synthesizing and caching")
+
+        async def _one_chunk() -> AsyncIterable[str]:
+            yield gallery_text
+
+        frames: list[rtc.AudioFrame] = []
+        async for frame in Agent.default.tts_node(self, _one_chunk(), model_settings):
+            frames.append(frame)
+            yield frame
+        gallery_audio_cache.save(voice, gallery_text, frames)
+
+    async def _llm_node_with_fillers(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[llm.Tool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[str]:
+        """Real LLM turn, but says a cached filler line (see FILLER_LINES) if
+        the first chunk hasn't arrived by 3s/5s, so she isn't hearing dead air."""
+        gen = Agent.default.llm_node(self, chat_ctx, tools, model_settings).__aiter__()
+        start = time.monotonic()
+        deadlines = [start + delay for delay in FILLER_DELAYS]
+        stage = 0
+        task = asyncio.ensure_future(gen.__anext__())
+        try:
+            while True:
+                timeout = max(0.0, deadlines[stage] - time.monotonic()) if stage < len(deadlines) else None
+                try:
+                    first_chunk = (
+                        await task if timeout is None else await asyncio.wait_for(asyncio.shield(task), timeout)
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    self._say_filler(stage)
+                    stage += 1
+                except StopAsyncIteration:
+                    return
+        finally:
+            if not task.done():
+                task.cancel()
+
+        yield first_chunk
+        async for chunk in gen:
+            yield chunk
+
+    def _say_filler(self, stage: int) -> None:
+        lines = FILLER_LINES.get(self._character.id, ())
+        if stage >= len(lines):
+            return
+        text = lines[stage]
+        cached = gallery_audio_cache.load(self._character.tts_voice, text)
+        audio_kwargs = {"audio": _frames_to_async_iter(cached)} if cached is not None else {}
+        self.session.say(text, allow_interruptions=True, add_to_chat_ctx=False, **audio_kwargs)
 
 
 server = AgentServer()
@@ -228,6 +341,47 @@ def _warm_up_llm() -> None:
             return
 
 
+def _warm_up_filler_audio() -> None:
+    """Pre-render each character's FILLER_LINES to gallery_audio_cache so
+    _say_filler never has to synthesize live. Skipped for non-loopback
+    TTS_BASE_URL, same reasoning as _warm_up_llm."""
+    tts_base_url = os.getenv("TTS_BASE_URL", "http://127.0.0.1:8880/v1")
+    if not any(host in tts_base_url for host in ("127.0.0.1", "localhost")):
+        return
+
+    tts_api_key = os.getenv("TTS_API_KEY", "no-key-needed")
+    tts_speed = float(os.getenv("TTS_SPEED", "0.9"))
+
+    deadline = time.monotonic() + 180.0
+    for character in CHARACTERS.values():
+        for text in FILLER_LINES.get(character.id, ()):
+            if gallery_audio_cache.load(character.tts_voice, text) is not None:
+                continue
+            while time.monotonic() < deadline:
+                try:
+                    resp = httpx.post(
+                        f"{tts_base_url}/audio/speech",
+                        json={
+                            "model": "tts-1",
+                            "input": text,
+                            "voice": character.tts_voice,
+                            "response_format": "wav",
+                            "speed": tts_speed,
+                        },
+                        headers={"Authorization": f"Bearer {tts_api_key}"},
+                        timeout=30.0,
+                    )
+                    resp.raise_for_status()
+                    gallery_audio_cache.save_wav_bytes(character.tts_voice, text, resp.content)
+                    break
+                except httpx.HTTPError:
+                    time.sleep(1.0)
+            else:
+                logger.warning("filler audio warm-up gave up waiting for the TTS server")
+                return
+    logger.info("filler audio warm-up complete")
+
+
 def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load()
     # Warming up all 3 characters can take well past livekit-agents' own
@@ -238,6 +392,7 @@ def prewarm(proc: JobProcess) -> None:
     # loading alone is fast enough that the pool handshake completes
     # normally, and the LLM cache still ends up warm shortly after.
     threading.Thread(target=_warm_up_llm, daemon=True).start()
+    threading.Thread(target=_warm_up_filler_audio, daemon=True).start()
 
 
 server.setup_fnc = prewarm
